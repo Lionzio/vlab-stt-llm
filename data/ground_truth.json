@@ -1,0 +1,81 @@
+[
+  {
+    "id": "TC-001",
+    "audio_filename": "TC-001.mp3",
+    "scenario_type": "ideal",
+    "expected_transcription": "ajustar a frequência respiratória para quinze incursões por minuto",
+    "expected_extraction": {
+      "intent": "ajustar_parametro",
+      "parameter": "frequencia_respiratoria",
+      "value": 15.0,
+      "unit": "irpm",
+      "status": "OK"
+    }
+  },
+  {
+    "id": "TC-002",
+    "audio_filename": "TC-002.mp3",
+    "scenario_type": "unidade_omitida",
+    "expected_transcription": "coloca a peep em cinco",
+    "expected_extraction": {
+      "intent": "ajustar_parametro",
+      "parameter": "peep",
+      "value": 5.0,
+      "unit": "cmH2O",
+      "status": "OK_INFERRED_UNIT"
+    }
+  },
+  {
+    "id": "TC-003",
+    "audio_filename": "TC-003.mp3",
+    "scenario_type": "ambiguidade_terminologica",
+    "expected_transcription": "mudar a pa para doze por oito",
+    "expected_extraction": {
+      "intent": "ajustar_parametro",
+      "parameter": "pressao_arterial",
+      "value": null,
+      "unit": "mmHg",
+      "status": "REQUIRES_CLARIFICATION",
+      "notes": "Valores fracionados exigem value_systolic e value_diastolic"
+    }
+  },
+  {
+    "id": "TC-004",
+    "audio_filename": "TC-004.mp3",
+    "scenario_type": "fora_do_padrao_limites",
+    "expected_transcription": "configurar fio2 para duzentos por cento",
+    "expected_extraction": {
+      "intent": "ajustar_parametro",
+      "parameter": "fio2",
+      "value": 200.0,
+      "unit": "%",
+      "status": "OUT_OF_BOUNDS"
+    }
+  },
+  {
+    "id": "TC-005",
+    "audio_filename": "TC-005.mp3",
+    "scenario_type": "comando_incompleto",
+    "expected_transcription": "inicia o modo de ventilação",
+    "expected_extraction": {
+      "intent": "iniciar_terapia",
+      "parameter": "modo_ventilatorio",
+      "value": null,
+      "unit": null,
+      "status": "MISSING_VALUE"
+    }
+  },
+  {
+    "id": "TC-006",
+    "audio_filename": "TC-006.mp3",
+    "scenario_type": "ruido_simulado",
+    "expected_transcription": "ajusta o volume corrente pra seiscentos [ruído] mililitros",
+    "expected_extraction": {
+      "intent": "ajustar_parametro",
+      "parameter": "volume_corrente",
+      "value": 600.0,
+      "unit": "ml",
+      "status": "OK"
+    }
+  }
+]
