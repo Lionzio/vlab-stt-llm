@@ -1,0 +1,33 @@
+# Controle de versão
+.git
+.gitignore
+
+# Python
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Testes e cobertura
+.pytest_cache/
+.coverage
+
+# Linters e formatadores
+.ruff_cache/
+.mypy_cache/
+
+# Configurações locais
+.env
+
+# IDEs
+.vscode/
+.idea/
+.DS_Store
+
+# Docker
+Dockerfile*
+.dockerignore
