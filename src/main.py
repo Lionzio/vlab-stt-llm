@@ -1,10 +1,12 @@
 # src/main.py
-
 """Aplicação FastAPI — Pipeline STT + LLM para extração de parâmetros médicos.
 
 Expõe dois endpoints:
     GET  /health                        — Verificação de saúde da aplicação.
     POST /api/v1/extract-from-audio     — Pipeline completo: áudio → transcrição → extração.
+
+Utiliza Injeção de Dependência (DI) para compartilhar a mesma instância
+do GeminiManager (estado, limites de cota e conexões HTTP) entre todas as requisições.
 """
 
 from __future__ import annotations
@@ -15,14 +17,25 @@ import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from src.schemas import HealthCheckResponse
 from src.services.extractor import MedicalParameterExtraction, ParameterExtractor
+from src.services.gemini_manager import (
+    GeminiAuthError,
+    GeminiManager,
+    GeminiQuotaError,
+)
 from src.services.stt import GeminiSTT, STTAuthError, STTError, STTQuotaError
 
+# Configurando o logger principal da aplicação para forçar a exibição do nível INFO
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:\t  %(message)s",
+    force=True,  # Sobrescreve as configurações de log do uvicorn
+)
 logger = logging.getLogger(__name__)
 
 APP_VERSION = "0.1.0"
@@ -61,8 +74,9 @@ class PipelineResponse(BaseModel):
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     """Gerencia o ciclo de vida da aplicação FastAPI.
 
-    Valida no startup que as dependências de ambiente estão disponíveis,
-    evitando que a aplicação suba com configuração incompleta.
+    Instancia o GeminiManager (Singleton virtual via App State) no startup,
+    garantindo que as dependências de ambiente (chaves de API) estejam
+    disponíveis antes da aplicação aceitar tráfego.
 
     Args:
         application: Instância da aplicação FastAPI.
@@ -73,11 +87,15 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     Raises:
         RuntimeError: Se variáveis de ambiente obrigatórias estiverem ausentes.
     """
-    if not os.getenv("GEMINI_API_KEY", "").strip():
+    try:
+        # Inicializa o manager centralizado uma única vez
+        application.state.gemini_manager = GeminiManager()
+        logger.info("GeminiManager inicializado e anexado ao estado da aplicação.")
+    except GeminiAuthError as exc:
         raise RuntimeError(
-            "GEMINI_API_KEY não configurada. "
-            "Defina a variável no arquivo .env antes de iniciar a aplicação."
-        )
+            f"Erro na configuração da API Gemini no startup: {exc}"
+        ) from exc
+
     logger.info("Aplicação %s v%s iniciada.", SERVICE_NAME, APP_VERSION)
     yield
     logger.info("Aplicação %s encerrada.", SERVICE_NAME)
@@ -109,6 +127,19 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
+# Dependências (DI)
+# ---------------------------------------------------------------------------
+
+
+def get_gemini_manager(request: Request) -> GeminiManager:
+    """Recupera a instância global do GeminiManager anexada à aplicação.
+
+    Permite que os endpoints consumam o manager de forma limpa e mockável.
+    """
+    return request.app.state.gemini_manager
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -121,11 +152,7 @@ app.add_middleware(
     tags=["Observability"],
 )
 async def health_check() -> HealthCheckResponse:
-    """Retorna o status de saúde da aplicação.
-
-    Returns:
-        HealthCheckResponse: Payload com status, nome do serviço, versão e mensagem.
-    """
+    """Retorna o status de saúde da aplicação."""
     return HealthCheckResponse(
         status="ok",
         service=SERVICE_NAME,
@@ -148,41 +175,28 @@ async def health_check() -> HealthCheckResponse:
     responses={
         400: {"description": "Transcrição vazia ou parâmetro de entrada inválido."},
         422: {"description": "Arquivo ausente ou tipo de conteúdo incorreto."},
-        429: {"description": "Cota da API Gemini excedida."},
+        429: {"description": "Cota da API Gemini excedida em todas as chaves."},
         500: {"description": "Falha interna no STT ou no extractor."},
         503: {"description": "Falha de autenticação com a API Gemini."},
     },
 )
 async def extract_from_audio(
     audio_file: UploadFile,
+    manager: GeminiManager = Depends(get_gemini_manager),
 ) -> PipelineResponse:
     """Processa um arquivo de áudio pelo pipeline STT → LLM.
 
     Fluxo:
         1. Persiste o áudio recebido em arquivo temporário no disco.
-        2. Transcreve o áudio via GeminiSTT.
-        3. Extrai parâmetros médicos do texto via ParameterExtractor.
-        4. Remove o arquivo temporário no bloco finally (garantido).
-
-    Args:
-        audio_file: Arquivo de áudio enviado via multipart/form-data.
-            Formatos aceitos: .mp3, .wav, .ogg, .flac, .m4a.
-
-    Returns:
-        PipelineResponse: Transcrição e extração estruturada de parâmetros médicos.
-
-    Raises:
-        HTTPException(400): Se a transcrição retornar texto vazio.
-        HTTPException(429): Se a cota da API Gemini for excedida.
-        HTTPException(500): Se o STT ou o extractor falharem por erro interno.
-        HTTPException(503): Se a autenticação com a API Gemini falhar.
+        2. Instancia STT e Extractor injetando o Manager compartilhado.
+        3. Transcreve o áudio via GeminiSTT.
+        4. Extrai parâmetros médicos do texto via ParameterExtractor.
+        5. Remove o arquivo temporário no bloco finally (garantido).
     """
     temp_path: str | None = None
 
     try:
-        # ------------------------------------------------------------------
         # 1. Persistência do áudio em arquivo temporário
-        # ------------------------------------------------------------------
         suffix = _extract_suffix(audio_file.filename)
         with tempfile.NamedTemporaryFile(
             delete=False, suffix=suffix, prefix="vlab_audio_"
@@ -193,10 +207,8 @@ async def extract_from_audio(
 
         logger.info("Arquivo temporário criado: %s (%d bytes)", temp_path, len(content))
 
-        # ------------------------------------------------------------------
-        # 2. Transcrição via GeminiSTT
-        # ------------------------------------------------------------------
-        stt = GeminiSTT()
+        # 2. Transcrição via GeminiSTT (com Manager Injetado)
+        stt = GeminiSTT(manager=manager)
         transcription: str | None = await stt.transcribe(temp_path)
 
         if not transcription:
@@ -211,11 +223,17 @@ async def extract_from_audio(
 
         logger.info("Transcrição concluída: %r", transcription)
 
-        # ------------------------------------------------------------------
-        # 3. Extração de parâmetros médicos via ParameterExtractor
-        # ------------------------------------------------------------------
-        extractor = ParameterExtractor()
-        extraction: MedicalParameterExtraction = await extractor.extract(transcription)
+        # 3. Extração de parâmetros médicos via ParameterExtractor (com Manager Injetado)
+        extractor = ParameterExtractor(manager=manager)
+        extraction: MedicalParameterExtraction | None = await extractor.extract(
+            transcription
+        )
+
+        if extraction is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Falha ao extrair dados. O modelo retornou um resultado vazio ou inválido.",
+            )
 
         logger.info(
             "Extração concluída: intent=%s, status=%s",
@@ -226,24 +244,24 @@ async def extract_from_audio(
         return PipelineResponse(transcription=transcription, extraction=extraction)
 
     except HTTPException:
-        # Re-propaga HTTPExceptions sem transformação
+        # Re-propaga HTTPExceptions (400, 429, 503) geradas manualmente acima
         raise
 
-    except STTAuthError as exc:
+    except (STTAuthError, GeminiAuthError, ValueError) as exc:
         logger.error("Falha de autenticação com a API Gemini: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
-                "Falha de autenticação com o serviço de transcrição. "
-                "Verifique a configuração da GEMINI_API_KEY."
+                "Falha de autenticação com o serviço de inteligência artificial. "
+                "Verifique a configuração das chaves de API."
             ),
         ) from exc
 
-    except STTQuotaError as exc:
-        logger.warning("Cota da API Gemini excedida: %s", exc)
+    except (STTQuotaError, GeminiQuotaError) as exc:
+        logger.warning("Cotas das APIs esgotadas: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Cota do serviço de transcrição excedida. Tente novamente mais tarde.",
+            detail="Todas as cotas do serviço excedidas. Tente novamente mais tarde.",
         ) from exc
 
     except STTError as exc:
@@ -261,15 +279,12 @@ async def extract_from_audio(
         ) from exc
 
     finally:
-        # ------------------------------------------------------------------
         # 4. Limpeza garantida do arquivo temporário
-        # ------------------------------------------------------------------
         if temp_path is not None:
             try:
                 os.remove(temp_path)
                 logger.debug("Arquivo temporário removido: %s", temp_path)
             except OSError as cleanup_exc:
-                # Falha no cleanup nunca deve mascarar o erro original.
                 logger.warning(
                     "Não foi possível remover arquivo temporário %s: %s",
                     temp_path,

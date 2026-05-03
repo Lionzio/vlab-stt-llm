@@ -1,20 +1,17 @@
 # src/services/extractor_v2.py
-"""Extrator de parâmetros médicos V2 — Chain-of-Thought (CoT).
+"""Extrator de parâmetros médicos V2 — Abordagem Chain-of-Thought (CoT).
 
-Força o modelo a externalizar o raciocínio antes de preencher o JSON,
-reduzindo alucinações em cenários ambíguos ao custo de maior latência.
-Inclui Exponential Backoff via Tenacity para erros 429.
+Agora consome o GeminiManager para gerenciar cotas, clientes e fallback.
+Ao contrário do V1, o V2 exige resposta em texto livre para que o LLM
+possa externalizar seu raciocínio antes de preencher o JSON.
+Inclui injeção de dependência e propagação direta de exceções de cota.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import re
 
-from dotenv import load_dotenv
-from google import genai
-from google.genai import errors as genai_errors
 from google.genai import types
 from tenacity import (
     retry,
@@ -24,8 +21,11 @@ from tenacity import (
 )
 
 from src.schemas.extraction import MedicalParameterExtraction
-
-load_dotenv()
+from src.services.gemini_manager import (
+    GeminiAuthError,
+    GeminiManager,
+    GeminiQuotaError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,202 +78,118 @@ Formate sua resposta EXATAMENTE assim (não omita nenhuma seção):
 
 _JSON_BLOCK_RE = re.compile(r"<json>\s*(\{.*?})\s*</json>", re.DOTALL)
 
-# Modelos estáveis em ordem de preferência
-_MODELS: list[str] = ["gemini-2.0-flash", "gemini-1.5-flash"]
-
 
 class ParameterExtractorV2:
-    """Extrai parâmetros médicos usando Chain-of-Thought antes do JSON final.
-
-    Diferença vs V1:
-        V1 usa `response_mime_type="application/json"` com schema enforcement
-        nativo — resposta direta, menor latência.
-        V2 usa `response_mime_type="text/plain"` com bloco <reasoning> + parse
-        manual do bloco <json> — maior robustez em ambiguidades.
+    """Extrai parâmetros via Chain-of-Thought usando GeminiManager.
 
     Attributes:
-        _client: Instância do cliente genai autenticado.
+        _manager: Instância do GeminiManager para orquestração da API.
     """
 
-    def __init__(self) -> None:
-        """Inicializa o cliente Gemini com a chave de API do ambiente.
-
-        Raises:
-            ValueError: Se GEMINI_API_KEY não estiver definida.
-        """
-        api_key = os.getenv("GEMINI_API_KEY", "").strip()
-        if not api_key:
-            raise ValueError(
-                "GEMINI_API_KEY não encontrada. "
-                "Defina a variável no arquivo .env na raiz do projeto."
-            )
-        self._client = genai.Client(api_key=api_key)
+    def __init__(self, manager: GeminiManager | None = None) -> None:
+        """Inicializa o extrator V2 com um manager opcional."""
+        try:
+            self._manager = manager or GeminiManager()
+        except GeminiAuthError as exc:
+            raise ValueError(str(exc)) from exc
 
     @retry(
         stop=stop_after_attempt(4),
-        wait=wait_exponential(multiplier=2, min=4, max=60),
-        retry=retry_if_exception_type(genai_errors.ClientError),
+        wait=wait_exponential(multiplier=2, min=4, max=30),
+        retry=retry_if_exception_type(GeminiQuotaError),
+        reraise=True,  # Propaga o erro de cota para o FastAPI tratar como 429
         before_sleep=lambda rs: logger.warning(
-            "[V2-CoT] Falha na API Gemini — backoff exponencial " "(tentativa %d/4)...",
+            "[V2-CoT] Ambas as chaves esgotadas. Backoff (tentativa %d/4)...",
             rs.attempt_number,
         ),
     )
     async def extract(
         self, transcription_text: str
     ) -> MedicalParameterExtraction | None:
-        """Extrai parâmetros via Chain-of-Thought com fallback de modelos.
-
-        O modelo produz um bloco <reasoning> com análise passo a passo e um
-        bloco <json> com o resultado. Apenas o bloco JSON é parseado e
-        validado via Pydantic.
-
-        Args:
-            transcription_text: Texto transcrito pelo STT para análise.
-
-        Returns:
-            MedicalParameterExtraction validado ou None se o bloco <json>
-            não for encontrado na resposta.
-
-        Raises:
-            genai_errors.ClientError: Propagada para o Tenacity em caso de 429.
-            ValueError: Se a autenticação falhar (401/403).
-        """
+        """Extrai parâmetros via Chain-of-Thought e faz parse do resultado."""
         logger.info("[V2-CoT] Analisando: '%s'", transcription_text)
-        last_exc: Exception | None = None
 
-        for model_id in _MODELS:
-            try:
-                response = await self._client.aio.models.generate_content(
-                    model=model_id,
-                    contents=transcription_text,
-                    config=types.GenerateContentConfig(
-                        system_instruction=_COT_SYSTEM_INSTRUCTION,
-                        response_mime_type="text/plain",
-                        temperature=0.1,
-                    ),
-                )
+        config = types.GenerateContentConfig(
+            system_instruction=_COT_SYSTEM_INSTRUCTION,
+            response_mime_type="text/plain",
+            temperature=0.1,
+        )
 
-                raw_text = response.text or ""
-                logger.debug("[V2-CoT] Resposta bruta:\n%s", raw_text)
+        try:
+            # Roteamento transparente via Manager
+            raw_text = await self._manager._execute_with_quota_fallback(
+                model=self._manager.pro_model,
+                contents=transcription_text,
+                config=config,
+            )
 
-                match = _JSON_BLOCK_RE.search(raw_text)
-                if not match:
-                    logger.error(
-                        "[V2-CoT] Bloco <json> não encontrado " "(modelo %s): %.200s",
-                        model_id,
-                        raw_text,
-                    )
-                    return None
+            logger.debug("[V2-CoT] Resposta bruta:\n%s", raw_text)
 
-                return MedicalParameterExtraction.model_validate_json(
-                    match.group(1).strip()
-                )
+            match = _JSON_BLOCK_RE.search(raw_text)
+            if not match:
+                logger.error("[V2-CoT] Bloco <json> não encontrado na resposta.")
+                return None
 
-            except genai_errors.ClientError as exc:
-                status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+            json_str = match.group(1).strip()
+            return MedicalParameterExtraction.model_validate_json(json_str)
 
-                if status in (401, 403):
-                    raise ValueError(
-                        f"Falha de autenticação com a API Gemini " f"(HTTP {status})."
-                    ) from exc
+        except GeminiAuthError as exc:
+            raise ValueError(f"Falha de autenticação: {exc}") from exc
 
-                if status == 429:
-                    raise
+        except GeminiQuotaError:
+            raise
 
-                last_exc = exc
-                logger.warning(
-                    "[V2-CoT] Modelo %s falhou (HTTP %s). " "Tentando próximo...",
-                    model_id,
-                    status,
-                )
-
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-                logger.warning(
-                    "[V2-CoT] Modelo %s falhou com erro inesperado: %s",
-                    model_id,
-                    exc,
-                )
-
-        logger.error("[V2-CoT] Todos os modelos falharam. Último erro: %s", last_exc)
-        return None
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[V2-CoT] Falha na extração após fallbacks: %s", exc)
+            return None
 
     @retry(
         stop=stop_after_attempt(4),
-        wait=wait_exponential(multiplier=2, min=4, max=60),
-        retry=retry_if_exception_type(genai_errors.ClientError),
+        wait=wait_exponential(multiplier=2, min=4, max=30),
+        retry=retry_if_exception_type(GeminiQuotaError),
+        reraise=True,
         before_sleep=lambda rs: logger.warning(
-            "[V2-CoT/reasoning] Backoff exponencial (tentativa %d/4)...",
+            "[V2-CoT/Reasoning] Ambas as chaves esgotadas. Backoff (tentativa %d/4)...",
             rs.attempt_number,
         ),
     )
     async def extract_with_reasoning(
         self, transcription_text: str
     ) -> tuple[MedicalParameterExtraction | None, str]:
-        """Extrai parâmetros e retorna também o raciocínio CoT do modelo.
+        """Extrai parâmetros e retorna também o raciocínio CoT do modelo."""
+        config = types.GenerateContentConfig(
+            system_instruction=_COT_SYSTEM_INSTRUCTION,
+            response_mime_type="text/plain",
+            temperature=0.1,
+        )
 
-        Útil para análise qualitativa e debugging em cenários de borda.
+        try:
+            raw_text = await self._manager._execute_with_quota_fallback(
+                model=self._manager.pro_model,
+                contents=transcription_text,
+                config=config,
+            )
 
-        Args:
-            transcription_text: Texto transcrito para análise.
+            reasoning_match = re.search(
+                r"<reasoning>\s*(.*?)\s*</reasoning>", raw_text, re.DOTALL
+            )
+            reasoning = reasoning_match.group(1).strip() if reasoning_match else ""
 
-        Returns:
-            Tupla (extração_validada, raciocínio_bruto). Retorna (None, "")
-            em caso de falha no parse do bloco <json>.
+            json_match = _JSON_BLOCK_RE.search(raw_text)
+            if not json_match:
+                return None, reasoning
 
-        Raises:
-            genai_errors.ClientError: Propagada para Tenacity em caso de 429.
-        """
-        last_exc: Exception | None = None
+            extraction = MedicalParameterExtraction.model_validate_json(
+                json_match.group(1).strip()
+            )
+            return extraction, reasoning
 
-        for model_id in _MODELS:
-            try:
-                response = await self._client.aio.models.generate_content(
-                    model=model_id,
-                    contents=transcription_text,
-                    config=types.GenerateContentConfig(
-                        system_instruction=_COT_SYSTEM_INSTRUCTION,
-                        response_mime_type="text/plain",
-                        temperature=0.1,
-                    ),
-                )
+        except GeminiAuthError as exc:
+            raise ValueError(f"Falha de autenticação: {exc}") from exc
 
-                raw_text = response.text or ""
+        except GeminiQuotaError:
+            raise
 
-                reasoning_match = re.search(
-                    r"<reasoning>\s*(.*?)\s*</reasoning>",
-                    raw_text,
-                    re.DOTALL,
-                )
-                reasoning = reasoning_match.group(1).strip() if reasoning_match else ""
-
-                json_match = _JSON_BLOCK_RE.search(raw_text)
-                if not json_match:
-                    return None, reasoning
-
-                extraction = MedicalParameterExtraction.model_validate_json(
-                    json_match.group(1).strip()
-                )
-                return extraction, reasoning
-
-            except genai_errors.ClientError as exc:
-                status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
-                if status == 429:
-                    raise
-                last_exc = exc
-                logger.warning(
-                    "[V2-CoT/reasoning] Modelo %s falhou (HTTP %s).",
-                    model_id,
-                    status,
-                )
-
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-                logger.warning(
-                    "[V2-CoT/reasoning] Modelo %s erro inesperado: %s",
-                    model_id,
-                    exc,
-                )
-
-        logger.error("[V2-CoT/reasoning] Todos os modelos falharam: %s", last_exc)
-        return None, ""
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[V2-CoT/Reasoning] Falha inesperada: %s", exc)
+            return None, ""

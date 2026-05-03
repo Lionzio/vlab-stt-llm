@@ -1,7 +1,7 @@
 # Evaluation Report — vlab-stt-llm Pipeline (A/B Testing)
 
-**Gerado em:** 2026-05-03 20:46 UTC  
-**Tempo total de execução:** 59.0s  
+**Gerado em:** 2026-05-03 23:30 UTC  
+**Tempo total de execução:** 0.1s  
 **Casos avaliados:** 6  
 **Semaphore limit:** 2 req paralelas  
 
@@ -62,8 +62,8 @@ As métricas abaixo avaliam a precisão dos modelos em extrair Entidades e Inten
 
 > **Análise:** O LLM deve inferir a unidade canônica. Unidade obtida: `N/A`.
 
-> ⚠️ **Erro V1:** `Extractor falhou: RetryError[<Future at 0x189e6153f90 state=finished raised ClientError>]`
-> ⚠️ **Erro V2:** `Extractor falhou: RetryError[<Future at 0x189e6183650 state=finished raised ClientError>]`
+> ⚠️ **Erro V1:** `Extractor retornou None.`
+> ⚠️ **Erro V2:** `Extractor retornou None.`
 
 ### TC-003 — `ambiguidade_terminologica`
 
@@ -89,8 +89,8 @@ As métricas abaixo avaliam a precisão dos modelos em extrair Entidades e Inten
 
 > **Análise:** Valor inválido intencionalmente (FiO2=200%). O Pydantic deve bloquear. Status obtido: `N/A`.
 
-> ⚠️ **Erro V1:** `Extractor falhou: RetryError[<Future at 0x189e6151710 state=finished raised ClientError>]`
-> ⚠️ **Erro V2:** `Extractor falhou: RetryError[<Future at 0x189e618c110 state=finished raised ClientError>]`
+> ⚠️ **Erro V1:** `Extractor retornou None.`
+> ⚠️ **Erro V2:** `Extractor retornou None.`
 
 ### TC-005 — `comando_incompleto`
 
@@ -116,8 +116,8 @@ As métricas abaixo avaliam a precisão dos modelos em extrair Entidades e Inten
 
 > **Análise:** Artefato de ruído inserido. O LLM deve ignorar tokens espúrios e extrair o valor corretamente.
 
-> ⚠️ **Erro V1:** `Extractor falhou: RetryError[<Future at 0x189e6179850 state=finished raised ClientError>]`
-> ⚠️ **Erro V2:** `Extractor falhou: RetryError[<Future at 0x189e6196490 state=finished raised ClientError>]`
+> ⚠️ **Erro V1:** `Extractor retornou None.`
+> ⚠️ **Erro V2:** `Extractor retornou None.`
 
 ### Conclusão Comparativa
 A abordagem **V1** é recomendada por menor latência para produção direta. A **V2** traz ganhos interpretativos para ambientes de testes e homologação rigorosa de hardware médico.

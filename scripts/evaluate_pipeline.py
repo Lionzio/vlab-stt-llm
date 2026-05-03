@@ -6,6 +6,9 @@ utilizando cache local para contornar limites de cota da API.
 Controla concorrência via asyncio.Semaphore para nunca ultrapassar 2
 requisições paralelas ativas — mitigando erros 429 do Free Tier.
 Gera relatório com métricas WER/CER, Precision, Recall e F1-Score.
+
+Injeta o GeminiManager nos serviços para gerenciar rotação de chaves
+e roteamento de modelos.
 """
 
 from __future__ import annotations
@@ -44,6 +47,7 @@ from src.services.extractor import (  # noqa: E402
     ParameterExtractor,
 )
 from src.services.extractor_v2 import ParameterExtractorV2  # noqa: E402
+from src.services.gemini_manager import GeminiManager  # noqa: E402
 from src.services.stt import GeminiSTT, STTError  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -262,7 +266,7 @@ async def run_case(
 
     try:
         if not audio_path.exists():
-            result.error_message = f"Arquivo de áudio não encontrado: {audio_path}"
+            result.error_message = f"Arquivo não encontrado: {audio_path}"
             logger.warning("[%s] %s", gt.id, result.error_message)
             return result
 
@@ -743,9 +747,14 @@ async def main() -> None:
     ground_truth_cases = load_ground_truth(GROUND_TRUTH_PATH)
     logger.info("%d casos carregados.", len(ground_truth_cases))
 
-    stt = GeminiSTT()
-    extractor_v1 = ParameterExtractor()
-    extractor_v2 = ParameterExtractorV2()
+    # --- WIRING DO GERENCIADOR ---
+    # Aqui instanciamos o GeminiManager UMA ÚNICA VEZ e o injetamos
+    # nos três serviços, centralizando cota e roteamento de modelos.
+    manager = GeminiManager()
+
+    stt = GeminiSTT(manager=manager)
+    extractor_v1 = ParameterExtractor(manager=manager)
+    extractor_v2 = ParameterExtractorV2(manager=manager)
 
     # Semaphore compartilhado: limita concorrência global de chamadas à API
     semaphore = asyncio.Semaphore(_SEMAPHORE_LIMIT)
