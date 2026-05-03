@@ -1,6 +1,6 @@
 # Evaluation Report — vlab-stt-llm Pipeline (A/B Testing)
 
-**Gerado em:** 2026-05-03 18:40 UTC  
+**Gerado em:** 2026-05-03 18:47 UTC  
 **Tempo total de execução:** 0.2s  
 **Casos avaliados:** 6  
 
