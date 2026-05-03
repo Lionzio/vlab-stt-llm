@@ -1,5 +1,10 @@
 from pydantic import BaseModel, Field
 
+from src.schemas.extraction import MedicalParameterExtraction
+
+# Isso ensina ao Python (e ao Ruff) quais classes pertencem à interface pública deste pacote
+__all__ = ["HealthCheckResponse", "MedicalParameterExtraction"]
+
 
 class HealthCheckResponse(BaseModel):
     """Schema de resposta para o endpoint de health check.
