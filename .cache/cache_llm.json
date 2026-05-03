@@ -1,0 +1,88 @@
+{
+  "3ee102804a30d23d7d48ba9f213acc3737b6978c78afcc50f7fc61300e66475e": {
+    "intent": "ajustar_parametro",
+    "parameter": "frequencia_respiratoria",
+    "value": 15.0,
+    "unit": "irpm",
+    "status": "OK"
+  },
+  "4799a72eb53c8f9ba6ea1f63423a0e1cfa4e0a5aa96fb7fed9b8060c32ba1110": {
+    "intent": "ajustar_parametro",
+    "parameter": "frequencia_respiratoria",
+    "value": 15.0,
+    "unit": "irpm",
+    "status": "OK"
+  },
+  "cffdbeb9ec841d1048cfd13a6d0a873e242eb34e2d75d33739eea5702acb914d": {
+    "intent": "ajustar_parametro",
+    "parameter": "peep",
+    "value": 5.0,
+    "unit": "cmH2O",
+    "status": "OK_INFERRED_UNIT"
+  },
+  "3f4061e83f5ed566176975b878f5138cbf25f484a474ea6fcd514ced54accdcc": {
+    "intent": "ajustar_parametro",
+    "parameter": "peep",
+    "value": 5.0,
+    "unit": "cmH2O",
+    "status": "OK_INFERRED_UNIT"
+  },
+  "343ac887c5d3c216c8aa99077d6a28ba4edc816d5e35314f5f44a6db8ef9c9c5": {
+    "intent": "ajustar_parametro",
+    "parameter": "pressao_arterial",
+    "value": null,
+    "unit": "mmHg",
+    "status": "REQUIRES_CLARIFICATION",
+    "notes": "Valores fracionados exigem value_systolic e value_diastolic"
+  },
+  "a643f4744307b621bd440b10e49837147952655815c5209ee6dd7a7da3e196d8": {
+    "intent": "ajustar_parametro",
+    "parameter": "pressao_arterial",
+    "value": null,
+    "unit": "mmHg",
+    "status": "REQUIRES_CLARIFICATION",
+    "notes": "Valores fracionados exigem value_systolic e value_diastolic"
+  },
+  "cc630598c5b856d8f1aa0e3a419b14fc4a6b7c0d152a4f555a2b36d95476326f": {
+    "intent": "ajustar_parametro",
+    "parameter": "fio2",
+    "value": 200.0,
+    "unit": "%",
+    "status": "OUT_OF_BOUNDS"
+  },
+  "bf8ee943029728179f44e74dde09dffc3b9cc112dd99f0f8f88c2e92034ebc3c": {
+    "intent": "ajustar_parametro",
+    "parameter": "fio2",
+    "value": 200.0,
+    "unit": "%",
+    "status": "OUT_OF_BOUNDS"
+  },
+  "df021ddbc999ed902018354d23c4f4cb012180aec880fb9d2d1ee1275e539368": {
+    "intent": "iniciar_terapia",
+    "parameter": "modo_ventilatorio",
+    "value": null,
+    "unit": null,
+    "status": "MISSING_VALUE"
+  },
+  "766bc3a662259411783737852193c8b0373ddd4c7fe573bcfe6de6f06c56941d": {
+    "intent": "iniciar_terapia",
+    "parameter": "modo_ventilatorio",
+    "value": null,
+    "unit": null,
+    "status": "MISSING_VALUE"
+  },
+  "e897ffc84fbbab69479975469e61efdec062d390482e5195db5effc62e5e0c8f": {
+    "intent": "ajustar_parametro",
+    "parameter": "volume_corrente",
+    "value": 600.0,
+    "unit": "ml",
+    "status": "OK"
+  },
+  "132bb80ccbd90488e99b42b8c7857db6a3df0d82d334893684afeaed4c616d35": {
+    "intent": "ajustar_parametro",
+    "parameter": "volume_corrente",
+    "value": 600.0,
+    "unit": "ml",
+    "status": "OK"
+  }
+}

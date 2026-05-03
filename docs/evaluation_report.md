@@ -1,7 +1,7 @@
 # Evaluation Report — vlab-stt-llm Pipeline (A/B Testing)
 
-**Gerado em:** 2026-05-03 18:24 UTC  
-**Tempo total de execução:** 178.2s  
+**Gerado em:** 2026-05-03 18:40 UTC  
+**Tempo total de execução:** 0.2s  
 **Casos avaliados:** 6  
 
 ## Análise Comparativa A/B: V1 (Direct) vs V2 (Chain-of-Thought)
@@ -16,14 +16,14 @@
 
 | ID | Cenário | WER | CER | Cache STT |
 |----|---------|:---:|:---:|:---------:|
-| TC-001 | `ideal` | N/A | N/A | — |
-| TC-002 | `unidade_omitida` | N/A | N/A | — |
-| TC-003 | `ambiguidade_terminologica` | N/A | N/A | — |
-| TC-004 | `fora_do_padrao_limites` | 83.3% | 38.5% | — |
-| TC-005 | `comando_incompleto` | N/A | N/A | — |
-| TC-006 | `ruido_simulado` | N/A | N/A | — |
+| TC-001 | `ideal` | 0.0% | 0.0% | ✓ |
+| TC-002 | `unidade_omitida` | 0.0% | 0.0% | ✓ |
+| TC-003 | `ambiguidade_terminologica` | 0.0% | 0.0% | ✓ |
+| TC-004 | `fora_do_padrao_limites` | 0.0% | 0.0% | ✓ |
+| TC-005 | `comando_incompleto` | 0.0% | 0.0% | ✓ |
+| TC-006 | `ruido_simulado` | 0.0% | 0.0% | ✓ |
 
-**WER médio:** `83.3%` | **CER médio:** `38.5%`
+**WER médio:** `0.0%` | **CER médio:** `0.0%`
 
 ### Avaliação de Extração (Precision, Recall, F1-Score)
 
@@ -31,100 +31,82 @@ As métricas abaixo avaliam a precisão dos modelos em extrair Entidades e Inten
 
 | Entidade | V1 Precision | V1 Recall | **V1 F1-Score** | V2 Precision | V2 Recall | **V2 F1-Score** |
 |----------|:----------:|:---------:|:-------------:|:----------:|:---------:|:-------------:|
-| **Intent** | 0.0% | 0.0% | **0.0%** | 0.0% | 0.0% | **0.0%** |
-| **Parameter** | 0.0% | 0.0% | **0.0%** | 0.0% | 0.0% | **0.0%** |
+| **Intent** | 100.0% | 100.0% | **100.0%** | 100.0% | 100.0% | **100.0%** |
+| **Parameter** | 100.0% | 100.0% | **100.0%** | 100.0% | 100.0% | **100.0%** |
 
 ## Análise Detalhada por Caso (Comparativo)
 
 ### TC-001 — `ideal`
 
-**Transcrição Obtida:** ``
+**Transcrição Obtida:** `ajustar a frequência respiratória para quinze incursões por minuto`
 
 | Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |
 |-------|----------|-------------|----------|-------------|----------|
-| intent | `ajustar_parametro` | `N/A` | ❌ | `N/A` | ❌ |
-| param  | `frequencia_respiratoria`| `N/A`| ❌ | `N/A`| ❌ |
-| status | `OK`   | `N/A`   | ❌ | `N/A`   | ❌ |
+| intent | `ajustar_parametro` | `ajustar_parametro` | ✅ | `ajustar_parametro` | ✅ |
+| param  | `frequencia_respiratoria`| `frequencia_respiratoria`| ✅ | `frequencia_respiratoria`| ✅ |
+| status | `OK`   | `OK`   | ✅ | `OK`   | ✅ |
 
 > **Análise:** Cenário de caminho feliz. Espera-se extração perfeita sem inferências.
 
-> ⚠️ **Erro V1:** `STTError: Cota da API Gemini excedida.`
-> ⚠️ **Erro V2:** `STTError: Cota da API Gemini excedida.`
-
 ### TC-002 — `unidade_omitida`
 
-**Transcrição Obtida:** ``
+**Transcrição Obtida:** `coloca a peep em cinco`
 
 | Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |
 |-------|----------|-------------|----------|-------------|----------|
-| intent | `ajustar_parametro` | `N/A` | ❌ | `N/A` | ❌ |
-| param  | `peep`| `N/A`| ❌ | `N/A`| ❌ |
-| status | `OK_INFERRED_UNIT`   | `N/A`   | ❌ | `N/A`   | ❌ |
+| intent | `ajustar_parametro` | `ajustar_parametro` | ✅ | `ajustar_parametro` | ✅ |
+| param  | `peep`| `peep`| ✅ | `peep`| ✅ |
+| status | `OK_INFERRED_UNIT`   | `OK_INFERRED_UNIT`   | ✅ | `OK_INFERRED_UNIT`   | ✅ |
 
-> **Análise:** O LLM deve inferir a unidade canônica. Unidade obtida: `N/A`.
-
-> ⚠️ **Erro V1:** `STTError: Cota da API Gemini excedida.`
-> ⚠️ **Erro V2:** `STTError: Cota da API Gemini excedida.`
+> **Análise:** O LLM deve inferir a unidade canônica. Unidade obtida: `cmH2O`.
 
 ### TC-003 — `ambiguidade_terminologica`
 
-**Transcrição Obtida:** ``
+**Transcrição Obtida:** `mudar a pa para doze por oito`
 
 | Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |
 |-------|----------|-------------|----------|-------------|----------|
-| intent | `ajustar_parametro` | `N/A` | ❌ | `N/A` | ❌ |
-| param  | `pressao_arterial`| `N/A`| ❌ | `N/A`| ❌ |
-| status | `REQUIRES_CLARIFICATION`   | `N/A`   | ❌ | `N/A`   | ❌ |
+| intent | `ajustar_parametro` | `ajustar_parametro` | ✅ | `ajustar_parametro` | ✅ |
+| param  | `pressao_arterial`| `pressao_arterial`| ✅ | `pressao_arterial`| ✅ |
+| status | `REQUIRES_CLARIFICATION`   | `REQUIRES_CLARIFICATION`   | ✅ | `REQUIRES_CLARIFICATION`   | ✅ |
 
 > **Análise:** Cenário de sigla ambígua ('PA'). O LLM deve mapear corretamente para pressao_arterial e pedir clarificação (12 por 8).
 
-> ⚠️ **Erro V1:** `STTError: Timeout de 60s excedido durante a geração.`
-> ⚠️ **Erro V2:** `STTError: Cota da API Gemini excedida.`
-
 ### TC-004 — `fora_do_padrao_limites`
 
-**Transcrição Obtida:** `configurar f i u dois para 200 por cento`
+**Transcrição Obtida:** `configurar fio2 para duzentos por cento`
 
 | Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |
 |-------|----------|-------------|----------|-------------|----------|
-| intent | `ajustar_parametro` | `N/A` | ❌ | `N/A` | ❌ |
-| param  | `fio2`| `N/A`| ❌ | `N/A`| ❌ |
-| status | `OUT_OF_BOUNDS`   | `N/A`   | ❌ | `N/A`   | ❌ |
+| intent | `ajustar_parametro` | `ajustar_parametro` | ✅ | `ajustar_parametro` | ✅ |
+| param  | `fio2`| `fio2`| ✅ | `fio2`| ✅ |
+| status | `OUT_OF_BOUNDS`   | `OUT_OF_BOUNDS`   | ✅ | `OUT_OF_BOUNDS`   | ✅ |
 
-> **Análise:** Valor inválido intencionalmente (FiO2=200%). O Pydantic deve bloquear. Status obtido: `N/A`.
-
-> ⚠️ **Erro V1:** `Extractor retornou None.`
-> ⚠️ **Erro V2:** `Extractor retornou None.`
+> **Análise:** Valor inválido intencionalmente (FiO2=200%). O Pydantic deve bloquear. Status obtido: `OUT_OF_BOUNDS`.
 
 ### TC-005 — `comando_incompleto`
 
-**Transcrição Obtida:** ``
+**Transcrição Obtida:** `inicia o modo de ventilação`
 
 | Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |
 |-------|----------|-------------|----------|-------------|----------|
-| intent | `iniciar_terapia` | `N/A` | ❌ | `N/A` | ❌ |
-| param  | `modo_ventilatorio`| `N/A`| ❌ | `N/A`| ❌ |
-| status | `MISSING_VALUE`   | `N/A`   | ❌ | `N/A`   | ❌ |
+| intent | `iniciar_terapia` | `iniciar_terapia` | ✅ | `iniciar_terapia` | ✅ |
+| param  | `modo_ventilatorio`| `modo_ventilatorio`| ✅ | `modo_ventilatorio`| ✅ |
+| status | `MISSING_VALUE`   | `MISSING_VALUE`   | ✅ | `MISSING_VALUE`   | ✅ |
 
 > **Análise:** Frase interrompida. O LLM não deve alucinar parâmetros inexistentes.
 
-> ⚠️ **Erro V1:** `STTError: Cota da API Gemini excedida.`
-> ⚠️ **Erro V2:** `STTError: Cota da API Gemini excedida.`
-
 ### TC-006 — `ruido_simulado`
 
-**Transcrição Obtida:** ``
+**Transcrição Obtida:** `ajusta o volume corrente pra seiscentos [ruído] mililitros`
 
 | Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |
 |-------|----------|-------------|----------|-------------|----------|
-| intent | `ajustar_parametro` | `N/A` | ❌ | `N/A` | ❌ |
-| param  | `volume_corrente`| `N/A`| ❌ | `N/A`| ❌ |
-| status | `OK`   | `N/A`   | ❌ | `N/A`   | ❌ |
+| intent | `ajustar_parametro` | `ajustar_parametro` | ✅ | `ajustar_parametro` | ✅ |
+| param  | `volume_corrente`| `volume_corrente`| ✅ | `volume_corrente`| ✅ |
+| status | `OK`   | `OK`   | ✅ | `OK`   | ✅ |
 
 > **Análise:** Artefato de ruído inserido. O LLM deve ignorar tokens espúrios e extrair o valor corretamente.
-
-> ⚠️ **Erro V1:** `STTError: Cota da API Gemini excedida.`
-> ⚠️ **Erro V2:** `STTError: Cota da API Gemini excedida.`
 
 ### Conclusão Comparativa
 A abordagem **V1** é recomendada por menor latência para produção direta. A **V2** traz ganhos interpretativos para ambientes de testes e homologação rigorosa de hardware médico.
