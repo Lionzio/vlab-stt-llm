@@ -3,7 +3,7 @@
 
 Executa cada caso de teste contra V1 (Direct) e V2 (Chain-of-Thought),
 utilizando cache local para contornar limites de cota da API.
-Gera relatório com métricas WER/CER e narrativas detalhadas.
+Gera relatório com métricas WER/CER, Precision, Recall, F1-Score e narrativas.
 """
 
 from __future__ import annotations
@@ -106,6 +106,25 @@ class CaseResult:
         return self.stt_success and self.schema_adherence and self.intent_match
 
 
+@dataclass
+class MLEvaluationMetrics:
+    precision: float
+    recall: float
+    f1: float
+
+    @property
+    def precision_pct(self) -> str:
+        return f"{self.precision * 100:.1f}%"
+
+    @property
+    def recall_pct(self) -> str:
+        return f"{self.recall * 100:.1f}%"
+
+    @property
+    def f1_pct(self) -> str:
+        return f"{self.f1 * 100:.1f}%"
+
+
 # ---------------------------------------------------------------------------
 # Core
 # ---------------------------------------------------------------------------
@@ -204,16 +223,48 @@ async def run_case(
     return result
 
 
+def calculate_ml_metrics(results: list[CaseResult], field: str) -> MLEvaluationMetrics:
+    """Calcula Precision, Recall e F1-Score para um campo específico (intent ou parameter)."""
+    tp = fp = fn = 0
+    for r in results:
+        gt_val = getattr(r.ground_truth, f"expected_{field}")
+        ext_val = getattr(r.extraction, field) if r.extraction else None
+
+        if isinstance(gt_val, str):
+            gt_val = gt_val.strip().lower()
+        if isinstance(ext_val, str):
+            ext_val = ext_val.strip().lower()
+
+        if gt_val == ext_val:
+            if gt_val:  # TP: Esperava algo e extraiu corretamente
+                tp += 1
+        else:
+            if ext_val:  # FP: Extraiu algo errado ou alucinou
+                fp += 1
+            if gt_val:  # FN: Deveria ter extraído mas errou ou omitiu
+                fn += 1
+
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1 = (
+        2 * (precision * recall) / (precision + recall)
+        if (precision + recall) > 0
+        else 0.0
+    )
+
+    return MLEvaluationMetrics(precision, recall, f1)
+
+
 # ---------------------------------------------------------------------------
 # Geração de Relatório A/B
 # ---------------------------------------------------------------------------
 _STATUS_ICON = {True: "✅", False: "❌"}
-_MATCH_ICON = {True: "✓", False: "✗", None: "—"}
 
 
 def print_rich_summary_ab(
     results_v1: list[CaseResult], results_v2: list[CaseResult]
 ) -> None:
+    # Tabela 1: Resumo por Caso
     table = Table(
         title="[bold cyan]Avaliação A/B — V1 (Direct) vs V2 (CoT)[/bold cyan]",
         show_lines=True,
@@ -245,6 +296,49 @@ def print_rich_summary_ab(
         )
     console.print()
     console.print(table)
+
+    # Tabela 2: Métricas de ML (F1-Score)
+    ml_table = Table(
+        title="[bold yellow]Métricas de ML (Precision / Recall / F1-Score)[/bold yellow]",
+        show_lines=True,
+        header_style="bold yellow",
+    )
+    ml_table.add_column("Entidade", style="bold", width=12)
+    ml_table.add_column("V1 Precision", justify="center", width=12)
+    ml_table.add_column("V1 Recall", justify="center", width=12)
+    ml_table.add_column("V1 F1-Score", justify="center", width=12, style="bold green")
+    ml_table.add_column("V2 Precision", justify="center", width=12)
+    ml_table.add_column("V2 Recall", justify="center", width=12)
+    ml_table.add_column("V2 F1-Score", justify="center", width=12, style="bold green")
+
+    i1, i2 = calculate_ml_metrics(results_v1, "intent"), calculate_ml_metrics(
+        results_v2, "intent"
+    )
+    p1, p2 = calculate_ml_metrics(results_v1, "parameter"), calculate_ml_metrics(
+        results_v2, "parameter"
+    )
+
+    ml_table.add_row(
+        "Intent",
+        i1.precision_pct,
+        i1.recall_pct,
+        i1.f1_pct,
+        i2.precision_pct,
+        i2.recall_pct,
+        i2.f1_pct,
+    )
+    ml_table.add_row(
+        "Parameter",
+        p1.precision_pct,
+        p1.recall_pct,
+        p1.f1_pct,
+        p2.precision_pct,
+        p2.recall_pct,
+        p2.f1_pct,
+    )
+
+    console.print()
+    console.print(ml_table)
     console.print()
 
 
@@ -274,6 +368,13 @@ def generate_report_ab(
     cer_values = [r.metrics.cer for r in results_v1 if r.metrics]
     avg_wer = sum(wer_values) / len(wer_values) if wer_values else 0.0
     avg_cer = sum(cer_values) / len(cer_values) if cer_values else 0.0
+
+    i1, i2 = calculate_ml_metrics(results_v1, "intent"), calculate_ml_metrics(
+        results_v2, "intent"
+    )
+    p1, p2 = calculate_ml_metrics(results_v1, "parameter"), calculate_ml_metrics(
+        results_v2, "parameter"
+    )
 
     lines = []
     a = lines.append
@@ -307,6 +408,26 @@ def generate_report_ab(
         a(f"| {gt.id} | `{gt.scenario_type}` | {wer} | {cer} | {cache} |")
     a("")
     a(f"**WER médio:** `{avg_wer * 100:.1f}%` | **CER médio:** `{avg_cer * 100:.1f}%`")
+    a("")
+
+    a("### Avaliação de Extração (Precision, Recall, F1-Score)")
+    a("")
+    a(
+        "As métricas abaixo avaliam a precisão dos modelos em extrair Entidades e Intenções em relação ao Gabarito (Ground Truth)."
+    )
+    a("")
+    a(
+        "| Entidade | V1 Precision | V1 Recall | **V1 F1-Score** | V2 Precision | V2 Recall | **V2 F1-Score** |"
+    )
+    a(
+        "|----------|:----------:|:---------:|:-------------:|:----------:|:---------:|:-------------:|"
+    )
+    a(
+        f"| **Intent** | {i1.precision_pct} | {i1.recall_pct} | **{i1.f1_pct}** | {i2.precision_pct} | {i2.recall_pct} | **{i2.f1_pct}** |"
+    )
+    a(
+        f"| **Parameter** | {p1.precision_pct} | {p1.recall_pct} | **{p1.f1_pct}** | {p2.precision_pct} | {p2.recall_pct} | **{p2.f1_pct}** |"
+    )
     a("")
 
     a("## Análise Detalhada por Caso (Comparativo)")

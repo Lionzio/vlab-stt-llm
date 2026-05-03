@@ -1,7 +1,7 @@
 # Evaluation Report — vlab-stt-llm Pipeline (A/B Testing)
 
-**Gerado em:** 2026-05-03 18:06 UTC  
-**Tempo total de execução:** 88.0s  
+**Gerado em:** 2026-05-03 18:24 UTC  
+**Tempo total de execução:** 178.2s  
 **Casos avaliados:** 6  
 
 ## Análise Comparativa A/B: V1 (Direct) vs V2 (Chain-of-Thought)
@@ -19,11 +19,20 @@
 | TC-001 | `ideal` | N/A | N/A | — |
 | TC-002 | `unidade_omitida` | N/A | N/A | — |
 | TC-003 | `ambiguidade_terminologica` | N/A | N/A | — |
-| TC-004 | `fora_do_padrao_limites` | N/A | N/A | — |
+| TC-004 | `fora_do_padrao_limites` | 83.3% | 38.5% | — |
 | TC-005 | `comando_incompleto` | N/A | N/A | — |
 | TC-006 | `ruido_simulado` | N/A | N/A | — |
 
-**WER médio:** `0.0%` | **CER médio:** `0.0%`
+**WER médio:** `83.3%` | **CER médio:** `38.5%`
+
+### Avaliação de Extração (Precision, Recall, F1-Score)
+
+As métricas abaixo avaliam a precisão dos modelos em extrair Entidades e Intenções em relação ao Gabarito (Ground Truth).
+
+| Entidade | V1 Precision | V1 Recall | **V1 F1-Score** | V2 Precision | V2 Recall | **V2 F1-Score** |
+|----------|:----------:|:---------:|:-------------:|:----------:|:---------:|:-------------:|
+| **Intent** | 0.0% | 0.0% | **0.0%** | 0.0% | 0.0% | **0.0%** |
+| **Parameter** | 0.0% | 0.0% | **0.0%** | 0.0% | 0.0% | **0.0%** |
 
 ## Análise Detalhada por Caso (Comparativo)
 
@@ -39,8 +48,8 @@
 
 > **Análise:** Cenário de caminho feliz. Espera-se extração perfeita sem inferências.
 
-> ⚠️ **Erro V1:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
-> ⚠️ **Erro V2:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
+> ⚠️ **Erro V1:** `STTError: Cota da API Gemini excedida.`
+> ⚠️ **Erro V2:** `STTError: Cota da API Gemini excedida.`
 
 ### TC-002 — `unidade_omitida`
 
@@ -54,8 +63,8 @@
 
 > **Análise:** O LLM deve inferir a unidade canônica. Unidade obtida: `N/A`.
 
-> ⚠️ **Erro V1:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
-> ⚠️ **Erro V2:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
+> ⚠️ **Erro V1:** `STTError: Cota da API Gemini excedida.`
+> ⚠️ **Erro V2:** `STTError: Cota da API Gemini excedida.`
 
 ### TC-003 — `ambiguidade_terminologica`
 
@@ -69,12 +78,12 @@
 
 > **Análise:** Cenário de sigla ambígua ('PA'). O LLM deve mapear corretamente para pressao_arterial e pedir clarificação (12 por 8).
 
-> ⚠️ **Erro V1:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
-> ⚠️ **Erro V2:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
+> ⚠️ **Erro V1:** `STTError: Timeout de 60s excedido durante a geração.`
+> ⚠️ **Erro V2:** `STTError: Cota da API Gemini excedida.`
 
 ### TC-004 — `fora_do_padrao_limites`
 
-**Transcrição Obtida:** ``
+**Transcrição Obtida:** `configurar f i u dois para 200 por cento`
 
 | Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |
 |-------|----------|-------------|----------|-------------|----------|
@@ -84,8 +93,8 @@
 
 > **Análise:** Valor inválido intencionalmente (FiO2=200%). O Pydantic deve bloquear. Status obtido: `N/A`.
 
-> ⚠️ **Erro V1:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
-> ⚠️ **Erro V2:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
+> ⚠️ **Erro V1:** `Extractor retornou None.`
+> ⚠️ **Erro V2:** `Extractor retornou None.`
 
 ### TC-005 — `comando_incompleto`
 
@@ -99,8 +108,8 @@
 
 > **Análise:** Frase interrompida. O LLM não deve alucinar parâmetros inexistentes.
 
-> ⚠️ **Erro V1:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
-> ⚠️ **Erro V2:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
+> ⚠️ **Erro V1:** `STTError: Cota da API Gemini excedida.`
+> ⚠️ **Erro V2:** `STTError: Cota da API Gemini excedida.`
 
 ### TC-006 — `ruido_simulado`
 
@@ -114,8 +123,8 @@
 
 > **Análise:** Artefato de ruído inserido. O LLM deve ignorar tokens espúrios e extrair o valor corretamente.
 
-> ⚠️ **Erro V1:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
-> ⚠️ **Erro V2:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
+> ⚠️ **Erro V1:** `STTError: Cota da API Gemini excedida.`
+> ⚠️ **Erro V2:** `STTError: Cota da API Gemini excedida.`
 
 ### Conclusão Comparativa
 A abordagem **V1** é recomendada por menor latência para produção direta. A **V2** traz ganhos interpretativos para ambientes de testes e homologação rigorosa de hardware médico.
