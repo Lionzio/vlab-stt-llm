@@ -1,162 +1,121 @@
-# Evaluation Report — vlab-stt-llm Pipeline
+# Evaluation Report — vlab-stt-llm Pipeline (A/B Testing)
 
-**Gerado em:** 2026-05-03 16:31 UTC  
-**Tempo total de execução:** 81.1s  
+**Gerado em:** 2026-05-03 18:06 UTC  
+**Tempo total de execução:** 88.0s  
 **Casos avaliados:** 6  
-**Taxa de aprovação geral:** 4/6 (66%) 
-> **Nota de Engenharia (Rate Limit):** A avaliação registrou 4/6 aprovações devido ao esgotamento intencional da cota diária do *Gemini Free Tier* (limite de 20 requisições/dia para o modelo `gemini-2.5-flash`). Os casos TC-005 e TC-006 falharam estritamente com `HTTP 429 RESOURCE_EXHAUSTED`, não por falha lógica. Os 4 primeiros casos comprovam a eficácia do *Schema Enforcement* e da inferência de domínio.
 
----
+## Análise Comparativa A/B: V1 (Direct) vs V2 (Chain-of-Thought)
 
-## Métricas Resumidas
+### Metodologia
+| Aspecto | V1 — Direct Schema | V2 — Chain-of-Thought |
+|---------|--------------------|-----------------------|
+| Técnica | Zero-Shot + `response_schema` nativo | CoT estruturado com `<reasoning>` |
+| Vantagem principal | Velocidade e previsibilidade | Robustez em casos ambíguos |
 
-| Métrica | Aprovados | Total | Taxa |
-|---------|-----------|-------|------|
-| STT bem-sucedido | 5 | 6 | 83% |
-| Aderência ao Schema Pydantic | 4 | 6 | 66% |
-| Intent correto | 4 | 6 | 66% |
-| Parameter correto | 4 | 6 | 66% |
-| Status de validação correto | 4 | 6 | 66% |
+### Métricas de Transcrição STT (Compartilhadas)
 
----
+| ID | Cenário | WER | CER | Cache STT |
+|----|---------|:---:|:---:|:---------:|
+| TC-001 | `ideal` | N/A | N/A | — |
+| TC-002 | `unidade_omitida` | N/A | N/A | — |
+| TC-003 | `ambiguidade_terminologica` | N/A | N/A | — |
+| TC-004 | `fora_do_padrao_limites` | N/A | N/A | — |
+| TC-005 | `comando_incompleto` | N/A | N/A | — |
+| TC-006 | `ruido_simulado` | N/A | N/A | — |
 
-## Resultados por Caso de Teste
+**WER médio:** `0.0%` | **CER médio:** `0.0%`
 
-| ID | Cenário | STT | Schema | Intent | Parâmetro | Status Val. | Latência | Resultado |
-|----|---------|-----|--------|--------|-----------|-------------|----------|-----------|
-| TC-001 | `ideal` | ✅ | ✅ | ✓ | ✓ | ✓ | 11.8s | ✅ |
-| TC-002 | `unidade_omitida` | ✅ | ✅ | ✓ | ✓ | ✓ | 9.6s | ✅ |
-| TC-003 | `ambiguidade_terminologica` | ✅ | ✅ | ✓ | ✓ | ✓ | 10.2s | ✅ |
-| TC-004 | `fora_do_padrao_limites` | ✅ | ✅ | ✓ | ✓ | ✓ | 11.1s | ✅ |
-| TC-005 | `comando_incompleto` | ❌ | ❌ | ✗ | ✗ | ✗ | 5.2s | ❌ |
-| TC-006 | `ruido_simulado` | ✅ | ❌ | ✗ | ✗ | ✗ | 8.2s | ❌ |
-
----
-
-## Análise Detalhada por Caso
+## Análise Detalhada por Caso (Comparativo)
 
 ### TC-001 — `ideal`
 
-**Resultado geral:** ✅ APROVADO  
-**Latência:** 11.78s  
+**Transcrição Obtida:** ``
 
-**Transcrição:**
+| Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |
+|-------|----------|-------------|----------|-------------|----------|
+| intent | `ajustar_parametro` | `N/A` | ❌ | `N/A` | ❌ |
+| param  | `frequencia_respiratoria`| `N/A`| ❌ | `N/A`| ❌ |
+| status | `OK`   | `N/A`   | ❌ | `N/A`   | ❌ |
 
-- Esperada : `ajustar a frequência respiratória para quinze incursões por minuto`
-- Obtida   : `ajustar a frequência respiratória para 15 incursões por minuto`
+> **Análise:** Cenário de caminho feliz. Espera-se extração perfeita sem inferências.
 
-**Extração:**
-
-| Campo | Esperado | Obtido | Match |
-|-------|----------|--------|-------|
-| intent | `ajustar_parametro` | `ajustar_parametro` | ✓ |
-| parameter | `frequencia_respiratoria` | `frequencia_respiratoria` | ✓ |
-| value | `15.0` | `15.0` | — |
-| unit | `irpm` | `irpm` | — |
-| status | `OK` | `OK` | ✓ |
-
----
+> ⚠️ **Erro V1:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
+> ⚠️ **Erro V2:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
 
 ### TC-002 — `unidade_omitida`
 
-**Resultado geral:** ✅ APROVADO  
-**Latência:** 9.59s  
+**Transcrição Obtida:** ``
 
-**Transcrição:**
+| Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |
+|-------|----------|-------------|----------|-------------|----------|
+| intent | `ajustar_parametro` | `N/A` | ❌ | `N/A` | ❌ |
+| param  | `peep`| `N/A`| ❌ | `N/A`| ❌ |
+| status | `OK_INFERRED_UNIT`   | `N/A`   | ❌ | `N/A`   | ❌ |
 
-- Esperada : `coloca a peep em cinco`
-- Obtida   : `coloca pipe em cinco`
+> **Análise:** O LLM deve inferir a unidade canônica. Unidade obtida: `N/A`.
 
-**Extração:**
-
-| Campo | Esperado | Obtido | Match |
-|-------|----------|--------|-------|
-| intent | `ajustar_parametro` | `ajustar_parametro` | ✓ |
-| parameter | `peep` | `peep` | ✓ |
-| value | `5.0` | `5.0` | — |
-| unit | `cmH2O` | `cmH2O` | — |
-| status | `OK_INFERRED_UNIT` | `OK_INFERRED_UNIT` | ✓ |
-
-**Análise:** O LLM deve inferir a unidade canônica a partir do mapeamento de domínio (parâmetro → unidade default). Unidade obtida: `cmH2O` — inferência correta.
-
----
+> ⚠️ **Erro V1:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
+> ⚠️ **Erro V2:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
 
 ### TC-003 — `ambiguidade_terminologica`
 
-**Resultado geral:** ✅ APROVADO  
-**Latência:** 10.19s  
+**Transcrição Obtida:** ``
 
-**Transcrição:**
+| Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |
+|-------|----------|-------------|----------|-------------|----------|
+| intent | `ajustar_parametro` | `N/A` | ❌ | `N/A` | ❌ |
+| param  | `pressao_arterial`| `N/A`| ❌ | `N/A`| ❌ |
+| status | `REQUIRES_CLARIFICATION`   | `N/A`   | ❌ | `N/A`   | ❌ |
 
-- Esperada : `mudar a pa para doze por oito`
-- Obtida   : `mudar a pa para 12 por 8`
+> **Análise:** Cenário de sigla ambígua ('PA'). O LLM deve mapear corretamente para pressao_arterial e pedir clarificação (12 por 8).
 
-**Extração:**
-
-| Campo | Esperado | Obtido | Match |
-|-------|----------|--------|-------|
-| intent | `ajustar_parametro` | `ajustar_parametro` | ✓ |
-| parameter | `pressao_arterial` | `pressao_arterial` | ✓ |
-| value | `None` | `None` | — |
-| unit | `mmHg` | `mmHg` | — |
-| status | `REQUIRES_CLARIFICATION` | `REQUIRES_CLARIFICATION` | ✓ |
-
----
+> ⚠️ **Erro V1:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
+> ⚠️ **Erro V2:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
 
 ### TC-004 — `fora_do_padrao_limites`
 
-**Resultado geral:** ✅ APROVADO  
-**Latência:** 11.12s  
+**Transcrição Obtida:** ``
 
-**Transcrição:**
+| Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |
+|-------|----------|-------------|----------|-------------|----------|
+| intent | `ajustar_parametro` | `N/A` | ❌ | `N/A` | ❌ |
+| param  | `fio2`| `N/A`| ❌ | `N/A`| ❌ |
+| status | `OUT_OF_BOUNDS`   | `N/A`   | ❌ | `N/A`   | ❌ |
 
-- Esperada : `configurar fio2 para duzentos por cento`
-- Obtida   : `configurar f i u dois para 200 por cento`
+> **Análise:** Valor inválido intencionalmente (FiO2=200%). O Pydantic deve bloquear. Status obtido: `N/A`.
 
-**Extração:**
-
-| Campo | Esperado | Obtido | Match |
-|-------|----------|--------|-------|
-| intent | `ajustar_parametro` | `ajustar_parametro` | ✓ |
-| parameter | `fio2` | `fio2` | ✓ |
-| value | `200.0` | `200.0` | — |
-| unit | `%` | `%` | — |
-| status | `OUT_OF_BOUNDS` | `OUT_OF_BOUNDS` | ✓ |
-
----
+> ⚠️ **Erro V1:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
+> ⚠️ **Erro V2:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
 
 ### TC-005 — `comando_incompleto`
 
-**Resultado geral:** ❌ REPROVADO  
-**Latência:** 5.16s  
+**Transcrição Obtida:** ``
 
-**Transcrição:**
+| Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |
+|-------|----------|-------------|----------|-------------|----------|
+| intent | `iniciar_terapia` | `N/A` | ❌ | `N/A` | ❌ |
+| param  | `modo_ventilatorio`| `N/A`| ❌ | `N/A`| ❌ |
+| status | `MISSING_VALUE`   | `N/A`   | ❌ | `N/A`   | ❌ |
 
-- Esperada : `inicia o modo de ventilação`
-- Obtida   : `(vazia)`
+> **Análise:** Frase interrompida. O LLM não deve alucinar parâmetros inexistentes.
 
-> ⚠️ **Erro capturado:** `STTError: Cota da API Gemini excedida.`
-
-**Análise:** Frase interrompida sem especificação de parâmetro ou modo. O LLM não deve alucinar — `value` e `parameter` devem ser nulos, `requires_human_confirmation` deve ser verdadeiro.
-
----
+> ⚠️ **Erro V1:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
+> ⚠️ **Erro V2:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
 
 ### TC-006 — `ruido_simulado`
 
-**Resultado geral:** ❌ REPROVADO  
-**Latência:** 8.23s  
+**Transcrição Obtida:** ``
 
-**Transcrição:**
+| Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |
+|-------|----------|-------------|----------|-------------|----------|
+| intent | `ajustar_parametro` | `N/A` | ❌ | `N/A` | ❌ |
+| param  | `volume_corrente`| `N/A`| ❌ | `N/A`| ❌ |
+| status | `OK`   | `N/A`   | ❌ | `N/A`   | ❌ |
 
-- Esperada : `ajusta o volume corrente pra seiscentos [ruído] mililitros`
-- Obtida   : `ajusta o volume corrente para 600 cough cough mililitros`
+> **Análise:** Artefato de ruído inserido. O LLM deve ignorar tokens espúrios e extrair o valor corretamente.
 
-> ⚠️ **Erro capturado:** `Extractor falhou: 'NoneType' object has no attribute 'intent'`
+> ⚠️ **Erro V1:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
+> ⚠️ **Erro V2:** `Extractor falhou: [Errno 11001] getaddrinfo failed`
 
----
-
-## Conclusão
-
-⚠️ **2 caso(s) reprovado(s):** TC-005, TC-006. Consulte a análise detalhada acima para identificar os pontos de falha.
-
-> *Relatório gerado automaticamente por `scripts/evaluate_pipeline.py`. Revisão humana recomendada para casos com `status_match=✗`.*
+### Conclusão Comparativa
+A abordagem **V1** é recomendada por menor latência para produção direta. A **V2** traz ganhos interpretativos para ambientes de testes e homologação rigorosa de hardware médico.

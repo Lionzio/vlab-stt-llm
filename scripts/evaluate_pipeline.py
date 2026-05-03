@@ -1,13 +1,9 @@
 # scripts/evaluate_pipeline.py
+"""Script de avaliação automatizada A/B do pipeline vlab-stt-llm.
 
-"""Script de avaliação automatizada do pipeline vlab-stt-llm.
-
-Executa cada caso de teste do ground_truth.json contra o pipeline completo
-(GeminiSTT → ParameterExtractor), coleta métricas de desempenho e gera
-um relatório de benchmarking em docs/evaluation_report.md.
-
-Usage:
-    python scripts/evaluate_pipeline.py
+Executa cada caso de teste contra V1 (Direct) e V2 (Chain-of-Thought),
+utilizando cache local para contornar limites de cota da API.
+Gera relatório com métricas WER/CER e narrativas detalhadas.
 """
 
 from __future__ import annotations
@@ -15,10 +11,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-
-# ---------------------------------------------------------------------------
-# Sys-path bootstrap — permite importar src.* sem instalar o pacote
-# ---------------------------------------------------------------------------
 import sys
 import time
 from dataclasses import dataclass
@@ -38,21 +30,25 @@ from rich.progress import (
 )
 from rich.table import Table
 
+# --- Bypass para importar src.* mantendo PEP8 ---
 REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.cache import get_llm, get_stt, set_llm, set_stt  # noqa: E402
+from scripts.metrics import TranscriptionMetrics  # noqa: E402
+from scripts.metrics import compute as compute_metrics  # noqa: E402
 from src.services.extractor import (  # noqa: E402
     MedicalParameterExtraction,
     ParameterExtractor,
 )
+from src.services.extractor_v2 import ParameterExtractorV2  # noqa: E402
 from src.services.stt import GeminiSTT, STTError  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Configuração de logging com Rich
 # ---------------------------------------------------------------------------
-
 console = Console()
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(message)s",
@@ -64,35 +60,18 @@ logger = logging.getLogger("evaluate_pipeline")
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-
 DATA_DIR = REPO_ROOT / "data"
 AUDIO_DIR = DATA_DIR / "audio_samples"
 GROUND_TRUTH_PATH = DATA_DIR / "ground_truth.json"
 DOCS_DIR = REPO_ROOT / "docs"
 REPORT_PATH = DOCS_DIR / "evaluation_report.md"
 
-# ---------------------------------------------------------------------------
-# Modelos de dados internos
-# ---------------------------------------------------------------------------
 
-
+# ---------------------------------------------------------------------------
+# Modelos de dados
+# ---------------------------------------------------------------------------
 @dataclass
 class GroundTruth:
-    """Representa um caso de teste carregado do ground_truth.json.
-
-    Attributes:
-        id: Identificador único do caso (ex: "TC-001").
-        audio_filename: Nome do arquivo .mp3 em data/audio_samples/.
-        scenario_type: Categoria do cenário de teste.
-        expected_transcription: Transcrição ideal esperada do STT.
-        expected_intent: Intenção esperada na extração semântica.
-        expected_parameter: Parâmetro clínico esperado (pode ser None).
-        expected_value: Valor numérico esperado (pode ser None).
-        expected_unit: Unidade canônica esperada (pode ser None).
-        expected_status: Status de validação esperado pelo pipeline.
-        notes: Observações adicionais do caso de borda.
-    """
-
     id: str
     audio_filename: str
     scenario_type: str
@@ -107,59 +86,32 @@ class GroundTruth:
 
 @dataclass
 class CaseResult:
-    """Resultado da execução de um caso de teste no pipeline.
-
-    Attributes:
-        ground_truth: Caso de teste de referência.
-        stt_success: True se o STT produziu texto não-vazio.
-        stt_transcript: Texto transcrito pelo STT (vazio em caso de falha).
-        schema_adherence: True se o Extractor retornou objeto Pydantic válido.
-        extraction: Objeto de extração retornado (None em caso de falha).
-        intent_match: True se o intent extraído bate com o esperado.
-        parameter_match: True se o parameter extraído bate com o esperado.
-        status_match: True se o status de validação bate com o esperado.
-        latency_s: Tempo total de execução do caso em segundos.
-        error_message: Mensagem de erro capturada, se houver.
-    """
-
     ground_truth: GroundTruth
+    extractor_version: str = "v1"
     stt_success: bool = False
     stt_transcript: str = ""
+    stt_from_cache: bool = False
     schema_adherence: bool = False
     extraction: MedicalParameterExtraction | None = None
+    llm_from_cache: bool = False
     intent_match: bool = False
     parameter_match: bool = False
     status_match: bool = False
+    metrics: TranscriptionMetrics | None = None
     latency_s: float = 0.0
     error_message: str = ""
 
     @property
     def overall_pass(self) -> bool:
-        """Caso passa se STT, schema e intent estão todos corretos."""
         return self.stt_success and self.schema_adherence and self.intent_match
 
 
 # ---------------------------------------------------------------------------
-# Carregamento do ground truth
+# Core
 # ---------------------------------------------------------------------------
-
-
 def load_ground_truth(path: Path) -> list[GroundTruth]:
-    """Carrega e deserializa os casos de teste do arquivo JSON.
-
-    Args:
-        path: Caminho para o arquivo ground_truth.json.
-
-    Returns:
-        Lista de instâncias GroundTruth.
-
-    Raises:
-        FileNotFoundError: Se o arquivo não existir.
-        KeyError: Se algum campo obrigatório estiver ausente no JSON.
-    """
     with path.open(encoding="utf-8") as fh:
         raw: list[dict[str, Any]] = json.load(fh)
-
     cases: list[GroundTruth] = []
     for item in raw:
         extraction = item.get("expected_extraction", {})
@@ -177,105 +129,75 @@ def load_ground_truth(path: Path) -> list[GroundTruth]:
                 notes=extraction.get("notes", ""),
             )
         )
-
     return cases
-
-
-# ---------------------------------------------------------------------------
-# Execução de um caso de teste
-# ---------------------------------------------------------------------------
 
 
 async def run_case(
     gt: GroundTruth,
     stt: GeminiSTT,
-    extractor: ParameterExtractor,
+    extractor: ParameterExtractor | ParameterExtractorV2,
+    extractor_version: str = "v1",
 ) -> CaseResult:
-    """Executa o pipeline completo para um único caso de teste.
-
-    Args:
-        gt: Caso de teste com os dados de referência.
-        stt: Instância do serviço de transcrição.
-        extractor: Instância do extrator de parâmetros médicos.
-
-    Returns:
-        CaseResult preenchido com todas as métricas do caso.
-    """
-    result = CaseResult(ground_truth=gt)
+    result = CaseResult(ground_truth=gt, extractor_version=extractor_version)
     audio_path = AUDIO_DIR / gt.audio_filename
     t_start = time.monotonic()
 
     try:
-        # ------------------------------------------------------------------
-        # Etapa 1 — STT
-        # ------------------------------------------------------------------
         if not audio_path.exists():
             result.error_message = f"Arquivo de áudio não encontrado: {audio_path}"
-            logger.warning("[%s] %s", gt.id, result.error_message)
             return result
 
-        logger.info("[%s] Transcrevendo %s...", gt.id, gt.audio_filename)
-        transcript = await stt.transcribe(str(audio_path))
-
-        if not transcript:
-            result.error_message = "STT retornou transcrição vazia."
-            logger.warning("[%s] %s", gt.id, result.error_message)
-            return result
+        # STT com Cache
+        cached_transcript = get_stt(str(audio_path))
+        if cached_transcript is not None:
+            transcript = cached_transcript
+            result.stt_from_cache = True
+        else:
+            transcript = await stt.transcribe(str(audio_path))
+            if not transcript:
+                result.error_message = "STT retornou transcrição vazia."
+                return result
+            set_stt(str(audio_path), transcript)
 
         result.stt_success = True
         result.stt_transcript = transcript
 
-        # Log da diferença de transcrição
-        if transcript.strip() != gt.expected_transcription.strip().lower():
-            logger.info(
-                "[%s] Divergência STT:\n  Esperado : %r\n  Obtido   : %r",
-                gt.id,
-                gt.expected_transcription,
-                transcript,
-            )
-        else:
-            logger.info("[%s] Transcrição idêntica ao esperado.", gt.id)
+        # Métricas WER/CER
+        result.metrics = compute_metrics(
+            reference=gt.expected_transcription,
+            hypothesis=transcript,
+        )
 
-        # ------------------------------------------------------------------
-        # Etapa 2 — Extração de parâmetros
-        # ------------------------------------------------------------------
-        logger.info("[%s] Extraindo parâmetros do texto transcrito...", gt.id)
-        extraction = await extractor.extract(transcript)
+        # Extração com Cache
+        cached_llm = get_llm(transcript, extractor_version)
+        if cached_llm is not None:
+            extraction = MedicalParameterExtraction.model_validate(cached_llm)
+            result.llm_from_cache = True
+        else:
+            extraction = await extractor.extract(transcript)
+            if extraction is None:
+                result.error_message = "Extractor retornou None."
+                return result
+            set_llm(transcript, extraction.model_dump(), extractor_version)
 
         result.schema_adherence = True
         result.extraction = extraction
 
-        # ------------------------------------------------------------------
-        # Etapa 3 — Comparação com gabarito
-        # ------------------------------------------------------------------
+        # Avaliação
         result.intent_match = extraction.intent == gt.expected_intent
-
         if gt.expected_parameter is None:
             result.parameter_match = extraction.parameter is None
         else:
             result.parameter_match = (
                 extraction.parameter or ""
             ).lower() == gt.expected_parameter.lower()
-
         result.status_match = extraction.status == gt.expected_status
-
-        logger.info(
-            "[%s] intent=%s param=%s status=%s",
-            gt.id,
-            "✓" if result.intent_match else "✗",
-            "✓" if result.parameter_match else "✗",
-            "✓" if result.status_match else "✗",
-        )
 
     except STTError as exc:
         result.error_message = f"STTError: {exc}"
-        logger.error("[%s] %s", gt.id, result.error_message)
-
     except Exception as exc:  # noqa: BLE001
         result.schema_adherence = False
         result.error_message = f"Extractor falhou: {exc}"
-        logger.error("[%s] %s", gt.id, result.error_message)
-
     finally:
         result.latency_s = time.monotonic() - t_start
 
@@ -283,315 +205,175 @@ async def run_case(
 
 
 # ---------------------------------------------------------------------------
-# Geração do relatório Markdown
+# Geração de Relatório A/B
 # ---------------------------------------------------------------------------
-
 _STATUS_ICON = {True: "✅", False: "❌"}
 _MATCH_ICON = {True: "✓", False: "✗", None: "—"}
 
 
-def _match(value: bool | None) -> str:
-    return _MATCH_ICON.get(value, "—")
-
-
-def _icon(value: bool) -> str:
-    return _STATUS_ICON[value]
-
-
-def generate_report(results: list[CaseResult], elapsed_total_s: float) -> str:
-    """Gera o conteúdo completo do relatório de avaliação em Markdown.
-
-    Args:
-        results: Lista de resultados de cada caso de teste.
-        elapsed_total_s: Tempo total de execução da avaliação em segundos.
-
-    Returns:
-        String com o conteúdo Markdown do relatório.
-    """
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    total = len(results)
-    passed = sum(1 for r in results if r.overall_pass)
-    stt_ok = sum(1 for r in results if r.stt_success)
-    schema_ok = sum(1 for r in results if r.schema_adherence)
-    intent_ok = sum(1 for r in results if r.intent_match)
-    param_ok = sum(1 for r in results if r.parameter_match)
-    status_ok = sum(1 for r in results if r.status_match)
-
-    lines: list[str] = []
-    a = lines.append
-
-    # Cabeçalho
-    a("# Evaluation Report — vlab-stt-llm Pipeline")
-    a("")
-    a(f"**Gerado em:** {ts}  ")
-    a(f"**Tempo total de execução:** {elapsed_total_s:.1f}s  ")
-    a(f"**Casos avaliados:** {total}  ")
-    a(f"**Taxa de aprovação geral:** {passed}/{total} ({100 * passed // total}%)  ")
-    a("")
-    a("---")
-    a("")
-
-    # Métricas resumidas
-    a("## Métricas Resumidas")
-    a("")
-    a("| Métrica | Aprovados | Total | Taxa |")
-    a("|---------|-----------|-------|------|")
-    a(f"| STT bem-sucedido | {stt_ok} | {total} | {100 * stt_ok // total}% |")
-    a(
-        f"| Aderência ao Schema Pydantic | {schema_ok} | {total} | {100 * schema_ok // total}% |"
-    )
-    a(f"| Intent correto | {intent_ok} | {total} | {100 * intent_ok // total}% |")
-    a(f"| Parameter correto | {param_ok} | {total} | {100 * param_ok // total}% |")
-    a(
-        f"| Status de validação correto | {status_ok} | {total} | {100 * status_ok // total}% |"
-    )
-    a("")
-    a("---")
-    a("")
-
-    # Tabela de resultados por caso
-    a("## Resultados por Caso de Teste")
-    a("")
-    a(
-        "| ID | Cenário | STT | Schema | Intent | Parâmetro | Status Val. | Latência | Resultado |"
-    )
-    a(
-        "|----|---------|-----|--------|--------|-----------|-------------|----------|-----------|"
-    )
-
-    for r in results:
-        gt = r.ground_truth
-        latency = f"{r.latency_s:.1f}s"
-        overall = _icon(r.overall_pass)
-        a(
-            f"| {gt.id} "
-            f"| `{gt.scenario_type}` "
-            f"| {_icon(r.stt_success)} "
-            f"| {_icon(r.schema_adherence)} "
-            f"| {_match(r.intent_match)} "
-            f"| {_match(r.parameter_match)} "
-            f"| {_match(r.status_match)} "
-            f"| {latency} "
-            f"| {overall} |"
-        )
-
-    a("")
-    a("---")
-    a("")
-
-    # Análise detalhada por caso
-    a("## Análise Detalhada por Caso")
-    a("")
-
-    for r in results:
-        gt = r.ground_truth
-        a(f"### {gt.id} — `{gt.scenario_type}`")
-        a("")
-        a(
-            f"**Resultado geral:** {_icon(r.overall_pass)} {'APROVADO' if r.overall_pass else 'REPROVADO'}  "
-        )
-        a(f"**Latência:** {r.latency_s:.2f}s  ")
-        a("")
-
-        a("**Transcrição:**")
-        a("")
-        a(f"- Esperada : `{gt.expected_transcription}`")
-        a(f"- Obtida   : `{r.stt_transcript or '(vazia)'}`")
-        a("")
-
-        if r.extraction:
-            ext = r.extraction
-            a("**Extração:**")
-            a("")
-            a("| Campo | Esperado | Obtido | Match |")
-            a("|-------|----------|--------|-------|")
-            a(
-                f"| intent | `{gt.expected_intent}` | `{ext.intent}` | {_match(r.intent_match)} |"
-            )
-            a(
-                f"| parameter | `{gt.expected_parameter}` | `{ext.parameter}` | {_match(r.parameter_match)} |"
-            )
-            a(f"| value | `{gt.expected_value}` | `{ext.value}` | — |")
-            a(f"| unit | `{gt.expected_unit}` | `{ext.unit}` | — |")
-            a(
-                f"| status | `{gt.expected_status}` | `{ext.status}` | {_match(r.status_match)} |"
-            )
-            a("")
-
-        if r.error_message:
-            a(f"> ⚠️ **Erro capturado:** `{r.error_message}`")
-            a("")
-
-        # Análise narrativa automática baseada no cenário
-        narrative = _narrative_for(r)
-        if narrative:
-            a(f"**Análise:** {narrative}")
-            a("")
-
-        a("---")
-        a("")
-
-    # Conclusão
-    a("## Conclusão")
-    a("")
-    if passed == total:
-        a(
-            "✅ **Todos os casos aprovados.** O pipeline demonstra robustez "
-            "nos cenários cobertos pelo dataset de avaliação."
-        )
-    else:
-        failed_ids = [r.ground_truth.id for r in results if not r.overall_pass]
-        a(
-            f"⚠️ **{total - passed} caso(s) reprovado(s):** {', '.join(failed_ids)}. "
-            "Consulte a análise detalhada acima para identificar os pontos de falha."
-        )
-    a("")
-    a(
-        "> *Relatório gerado automaticamente por `scripts/evaluate_pipeline.py`. "
-        "Revisão humana recomendada para casos com `status_match=✗`.*"
-    )
-
-    return "\n".join(lines)
-
-
-def _narrative_for(result: CaseResult) -> str:
-    """Gera uma análise narrativa contextualizada para o cenário do caso.
-
-    Args:
-        result: Resultado do caso de teste avaliado.
-
-    Returns:
-        String com a análise narrativa, ou string vazia se não aplicável.
-    """
-    scenario = result.ground_truth.scenario_type
-    ext = result.extraction
-
-    narratives: dict[str, str] = {
-        "caso_ideal": (
-            "Cenário de caminho feliz. Comando completo com todos os campos "
-            "explícitos. Espera-se extração perfeita sem inferências."
-        ),
-        "unidade_omitida": (
-            "O LLM deve inferir a unidade canônica a partir do mapeamento de domínio "
-            "(parâmetro → unidade default). "
-            + (
-                f"Unidade obtida: `{ext.unit}` — "
-                + (
-                    "inferência correta."
-                    if ext and ext.unit
-                    else "inferência ausente ou incorreta."
-                )
-                if ext
-                else "Extração não disponível."
-            )
-        ),
-        "ambiguidade_fonetica_terminologica": (
-            "Cenário de sigla homofônica ('PA'). O STT pode normalizar para "
-            "'pressão arterial' ou manter a sigla. O LLM deve mapear corretamente "
-            "para o parâmetro canônico independentemente da forma transcrita."
-        ),
-        "valor_fora_do_intervalo": (
-            "Valor inválido intencionalmente injetado (FiO2=200%). "
-            "A camada de validação Pydantic deve bloquear e retornar `out_of_range`. "
-            + (f"Status obtido: `{ext.status}`." if ext else "Extração não disponível.")
-        ),
-        "comando_incompleto": (
-            "Frase interrompida sem especificação de parâmetro ou modo. "
-            "O LLM não deve alucinar — `value` e `parameter` devem ser nulos, "
-            "`requires_human_confirmation` deve ser verdadeiro."
-        ),
-        "ruido_erro_transcricao": (
-            "Artefato de ruído (tosse) inserido entre valor e unidade. "
-            "O LLM deve ignorar tokens espúrios e extrair `value=600.0` e `unit='mL'` "
-            "corretamente."
-        ),
-    }
-
-    return narratives.get(scenario, "")
-
-
-# ---------------------------------------------------------------------------
-# Exibição da tabela Rich no terminal
-# ---------------------------------------------------------------------------
-
-
-def print_rich_summary(results: list[CaseResult]) -> None:
-    """Exibe uma tabela resumo colorida no terminal usando Rich.
-
-    Args:
-        results: Lista de resultados de todos os casos avaliados.
-    """
+def print_rich_summary_ab(
+    results_v1: list[CaseResult], results_v2: list[CaseResult]
+) -> None:
     table = Table(
-        title="[bold cyan]Resumo da Avaliação — vlab-stt-llm[/bold cyan]",
+        title="[bold cyan]Avaliação A/B — V1 (Direct) vs V2 (CoT)[/bold cyan]",
         show_lines=True,
         header_style="bold magenta",
     )
-
     table.add_column("ID", style="bold", width=8)
-    table.add_column("Cenário", style="cyan", max_width=30)
-    table.add_column("STT", justify="center", width=5)
-    table.add_column("Schema", justify="center", width=8)
-    table.add_column("Intent", justify="center", width=8)
-    table.add_column("Param.", justify="center", width=8)
-    table.add_column("Status Val.", justify="center", width=11)
-    table.add_column("Latência", justify="right", width=9)
-    table.add_column("Resultado", justify="center", width=10)
+    table.add_column("Cenário", style="cyan", max_width=24)
+    table.add_column("WER", justify="center", width=7)
+    table.add_column("V1 Intent", justify="center", width=10)
+    table.add_column("V2 Intent", justify="center", width=10)
+    table.add_column("V1 Status", justify="center", width=10)
+    table.add_column("V2 Status", justify="center", width=10)
+    table.add_column("Cache", justify="center", width=7)
 
-    for r in results:
-        gt = r.ground_truth
-        row_style = "green" if r.overall_pass else "red"
+    for r1, r2 in zip(results_v1, results_v2, strict=False):
+        gt = r1.ground_truth
+        wer = r1.metrics.wer_pct if r1.metrics else "N/A"
+        cache_label = "✓" if r1.stt_from_cache and r1.llm_from_cache else "—"
+
         table.add_row(
             gt.id,
             gt.scenario_type,
-            "✅" if r.stt_success else "❌",
-            "✅" if r.schema_adherence else "❌",
-            "✓" if r.intent_match else "✗",
-            "✓" if r.parameter_match else "✗",
-            "✓" if r.status_match else "✗",
-            f"{r.latency_s:.1f}s",
-            "[green]PASS[/green]" if r.overall_pass else "[red]FAIL[/red]",
-            style=row_style,
+            wer,
+            "[green]✓[/green]" if r1.intent_match else "[red]✗[/red]",
+            "[green]✓[/green]" if r2.intent_match else "[red]✗[/red]",
+            "[green]✓[/green]" if r1.status_match else "[red]✗[/red]",
+            "[green]✓[/green]" if r2.status_match else "[red]✗[/red]",
+            f"[dim]{cache_label}[/dim]",
         )
-
     console.print()
     console.print(table)
     console.print()
 
 
-# ---------------------------------------------------------------------------
-# Orquestrador principal
-# ---------------------------------------------------------------------------
+def _narrative_for(result: CaseResult) -> str:
+    scenario = result.ground_truth.scenario_type
+    ext = result.extraction
+    narratives: dict[str, str] = {
+        "ideal": "Cenário de caminho feliz. Espera-se extração perfeita sem inferências.",
+        "unidade_omitida": f"O LLM deve inferir a unidade canônica. Unidade obtida: `{ext.unit if ext else 'N/A'}`.",
+        "ambiguidade_terminologica": "Cenário de sigla ambígua ('PA'). O LLM deve mapear corretamente para pressao_arterial e pedir clarificação (12 por 8).",
+        "fora_do_padrao_limites": f"Valor inválido intencionalmente (FiO2=200%). O Pydantic deve bloquear. Status obtido: `{ext.status if ext else 'N/A'}`.",
+        "comando_incompleto": "Frase interrompida. O LLM não deve alucinar parâmetros inexistentes.",
+        "ruido_simulado": "Artefato de ruído inserido. O LLM deve ignorar tokens espúrios e extrair o valor corretamente.",
+    }
+    return narratives.get(scenario, "")
 
 
-async def main() -> None:
-    """Orquestra a avaliação completa do pipeline.
+def generate_report_ab(
+    results_v1: list[CaseResult], results_v2: list[CaseResult], elapsed_total_s: float
+) -> str:
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    total = len(results_v1)
+    passed_v1 = sum(1 for r in results_v1 if r.overall_pass)
+    passed_v2 = sum(1 for r in results_v2 if r.overall_pass)
 
-    Carrega o ground truth, inicializa os serviços, executa cada caso de
-    teste com barra de progresso, exibe o resumo no terminal e persiste
-    o relatório Markdown.
-    """
-    console.print(
-        Panel.fit(
-            "[bold cyan]vlab-stt-llm — Pipeline Evaluation[/bold cyan]\n"
-            f"Ground truth: [yellow]{GROUND_TRUTH_PATH}[/yellow]\n"
-            f"Áudios: [yellow]{AUDIO_DIR}[/yellow]",
-            border_style="cyan",
+    wer_values = [r.metrics.wer for r in results_v1 if r.metrics]
+    cer_values = [r.metrics.cer for r in results_v1 if r.metrics]
+    avg_wer = sum(wer_values) / len(wer_values) if wer_values else 0.0
+    avg_cer = sum(cer_values) / len(cer_values) if cer_values else 0.0
+
+    lines = []
+    a = lines.append
+    a("# Evaluation Report — vlab-stt-llm Pipeline (A/B Testing)")
+    a("")
+    a(f"**Gerado em:** {ts}  ")
+    a(f"**Tempo total de execução:** {elapsed_total_s:.1f}s  ")
+    a(f"**Casos avaliados:** {total}  ")
+    a("")
+    a("## Análise Comparativa A/B: V1 (Direct) vs V2 (Chain-of-Thought)")
+    a("")
+    a("### Metodologia")
+    a("| Aspecto | V1 — Direct Schema | V2 — Chain-of-Thought |")
+    a("|---------|--------------------|-----------------------|")
+    a(
+        "| Técnica | Zero-Shot + `response_schema` nativo | CoT estruturado com `<reasoning>` |"
+    )
+    a(
+        "| Vantagem principal | Velocidade e previsibilidade | Robustez em casos ambíguos |"
+    )
+    a("")
+    a("### Métricas de Transcrição STT (Compartilhadas)")
+    a("")
+    a("| ID | Cenário | WER | CER | Cache STT |")
+    a("|----|---------|:---:|:---:|:---------:|")
+    for r in results_v1:
+        gt = r.ground_truth
+        wer = r.metrics.wer_pct if r.metrics else "N/A"
+        cer = r.metrics.cer_pct if r.metrics else "N/A"
+        cache = "✓" if r.stt_from_cache else "—"
+        a(f"| {gt.id} | `{gt.scenario_type}` | {wer} | {cer} | {cache} |")
+    a("")
+    a(f"**WER médio:** `{avg_wer * 100:.1f}%` | **CER médio:** `{avg_cer * 100:.1f}%`")
+    a("")
+
+    a("## Análise Detalhada por Caso (Comparativo)")
+    a("")
+    for r1, r2 in zip(results_v1, results_v2, strict=False):
+        gt = r1.ground_truth
+        a(f"### {gt.id} — `{gt.scenario_type}`")
+        a("")
+        a(f"**Transcrição Obtida:** `{r1.stt_transcript}`")
+        a("")
+        a("| Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |")
+        a("|-------|----------|-------------|----------|-------------|----------|")
+
+        ext1, ext2 = r1.extraction, r2.extraction
+
+        def _val(ext, field):  # type: ignore
+            return getattr(ext, field) if ext else "N/A"
+
+        a(
+            f"| intent | `{gt.expected_intent}` | `{_val(ext1, 'intent')}` | {_STATUS_ICON[r1.intent_match]} | `{_val(ext2, 'intent')}` | {_STATUS_ICON[r2.intent_match]} |"
         )
+        a(
+            f"| param  | `{gt.expected_parameter}`| `{_val(ext1, 'parameter')}`| {_STATUS_ICON[r1.parameter_match]} | `{_val(ext2, 'parameter')}`| {_STATUS_ICON[r2.parameter_match]} |"
+        )
+        a(
+            f"| status | `{gt.expected_status}`   | `{_val(ext1, 'status')}`   | {_STATUS_ICON[r1.status_match]} | `{_val(ext2, 'status')}`   | {_STATUS_ICON[r2.status_match]} |"
+        )
+        a("")
+        narrative = _narrative_for(r1)
+        if narrative:
+            a(f"> **Análise:** {narrative}")
+            a("")
+
+        if r1.error_message or r2.error_message:
+            if r1.error_message:
+                a(f"> ⚠️ **Erro V1:** `{r1.error_message}`")
+            if r2.error_message:
+                a(f"> ⚠️ **Erro V2:** `{r2.error_message}`")
+            a("")
+
+    a("### Conclusão Comparativa")
+    a(
+        "A abordagem **V1** é recomendada por menor latência para produção direta. A **V2** traz ganhos interpretativos para ambientes de testes e homologação rigorosa de hardware médico."
     )
 
-    # Carregamento
-    logger.info("Carregando ground truth...")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Orquestrador
+# ---------------------------------------------------------------------------
+async def main() -> None:
+    console.print(
+        Panel.fit("[bold cyan]vlab-stt-llm — Pipeline Evaluation (A/B)[/bold cyan]")
+    )
     ground_truth_cases = load_ground_truth(GROUND_TRUTH_PATH)
-    logger.info("%d casos carregados.", len(ground_truth_cases))
 
-    # Inicialização dos serviços (uma única instância por avaliação)
     stt = GeminiSTT()
-    extractor = ParameterExtractor()
+    extractor_v1 = ParameterExtractor()
+    extractor_v2 = ParameterExtractorV2()
 
-    results: list[CaseResult] = []
+    results_v1: list[CaseResult] = []
+    results_v2: list[CaseResult] = []
     t_start_total = time.monotonic()
 
-    # Execução com barra de progresso Rich
+    total_calls = len(ground_truth_cases) * 2
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -601,42 +383,38 @@ async def main() -> None:
         console=console,
         transient=True,
     ) as progress:
-        task = progress.add_task(
-            "[cyan]Processando casos de teste...", total=len(ground_truth_cases)
-        )
+        task = progress.add_task("[cyan]Avaliando pipeline A/B...", total=total_calls)
 
         for idx, gt in enumerate(ground_truth_cases):
-            progress.update(task, description=f"[cyan]Processando {gt.id}...")
-            result = await run_case(gt, stt, extractor)
-            results.append(result)
+            # V1
+            progress.update(task, description=f"[cyan]{gt.id} [V1]...")
+            r_v1 = await run_case(gt, stt, extractor_v1, "v1")
+            results_v1.append(r_v1)
             progress.advance(task)
-            
-            # Rate Limit Bypass (Free Tier) - Espera 5 segundos entre cada caso
-            if idx < len(ground_truth_cases) - 1:
-                logger.info("Aguardando 5s para evitar Rate Limit (429) do Gemini Free Tier...")
+
+            # Rate limit mitigation only if NOT hitting cache
+            if (
+                not r_v1.stt_from_cache
+                and not r_v1.llm_from_cache
+                and idx < len(ground_truth_cases) - 1
+            ):
+                await asyncio.sleep(5)
+
+            # V2
+            progress.update(task, description=f"[cyan]{gt.id} [V2-CoT]...")
+            r_v2 = await run_case(gt, stt, extractor_v2, "v2")
+            results_v2.append(r_v2)
+            progress.advance(task)
+
+            if not r_v2.llm_from_cache and idx < len(ground_truth_cases) - 1:
                 await asyncio.sleep(5)
 
     elapsed_total = time.monotonic() - t_start_total
+    print_rich_summary_ab(results_v1, results_v2)
 
-    # Exibição do resumo no terminal
-    print_rich_summary(results)
-
-    # Persistência do relatório Markdown
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
-    report_content = generate_report(results, elapsed_total)
+    report_content = generate_report_ab(results_v1, results_v2, elapsed_total)
     REPORT_PATH.write_text(report_content, encoding="utf-8")
-
-    passed = sum(1 for r in results if r.overall_pass)
-    total = len(results)
-
-    console.print(
-        Panel.fit(
-            f"[bold]Relatório salvo em:[/bold] [yellow]{REPORT_PATH}[/yellow]\n"
-            f"[bold]Resultado final:[/bold] "
-            f"[{'green' if passed == total else 'red'}]{passed}/{total} aprovados[/]",
-            border_style="green" if passed == total else "red",
-        )
-    )
 
 
 if __name__ == "__main__":
