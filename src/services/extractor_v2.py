@@ -19,6 +19,7 @@ import re
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.schemas.extraction import MedicalParameterExtraction
 
@@ -85,23 +86,13 @@ class ParameterExtractorV2:
     preencher o schema. Isso melhora a precisão em cenários ambíguos como
     siglas homofônicas e unidades implícitas.
 
-    Diferença vs V1:
-        - V1: `response_mime_type="application/json"` com schema enforcement nativo.
-              Resposta direta, menor latência, pode errar em casos ambíguos.
-        - V2: `response_mime_type="text/plain"` com CoT estruturado + parse manual
-              do bloco `<json>`. Maior latência/tokens, mais robusto em ambiguidades.
-
     Attributes:
         _client: Instância do cliente genai autenticado.
         _model_id: Identificador do modelo Gemini utilizado.
     """
 
     def __init__(self) -> None:
-        """Inicializa o cliente Gemini com a chave de API do ambiente.
-
-        Raises:
-            ValueError: Se GEMINI_API_KEY não estiver definida ou for inválida.
-        """
+        """Inicializa o cliente Gemini com a chave de API do ambiente."""
         api_key = os.getenv("GEMINI_API_KEY", "").strip()
         if not api_key:
             raise ValueError(
@@ -109,8 +100,16 @@ class ParameterExtractorV2:
                 "Defina a variável no arquivo .env na raiz do projeto."
             )
         self._client = genai.Client(api_key=api_key)
-        self._model_id = "gemini-2.5-flash"
+        # Atualizado para o modelo estável mais recente
+        self._model_id = "gemini-2.0-flash"
 
+    @retry(
+        stop=stop_after_attempt(4),
+        wait=wait_exponential(multiplier=2, min=4, max=15),
+        before_sleep=lambda retry_state: logger.warning(
+            f"Falha na API Gemini (Tentativa {retry_state.attempt_number}/4). Aguardando para tentar de novo..."
+        ),
+    )
     async def extract(
         self, transcription_text: str
     ) -> MedicalParameterExtraction | None:
@@ -119,89 +118,68 @@ class ParameterExtractorV2:
         O modelo produz um bloco <reasoning> com análise passo a passo seguido
         de um bloco <json> com o resultado estruturado. Apenas o bloco JSON é
         parseado e validado via Pydantic.
-
-        Args:
-            transcription_text: Texto transcrito pelo STT para análise.
-
-        Returns:
-            MedicalParameterExtraction validado pelo Pydantic, ou None se o
-            parse do bloco JSON falhar.
         """
         logger.info("[V2-CoT] Analisando: '%s'", transcription_text)
 
-        try:
-            response = await self._client.aio.models.generate_content(
-                model=self._model_id,
-                contents=transcription_text,
-                config=types.GenerateContentConfig(
-                    system_instruction=_COT_SYSTEM_INSTRUCTION,
-                    # Texto livre para permitir o bloco <reasoning> antes do JSON
-                    response_mime_type="text/plain",
-                    temperature=0.1,  # Levemente acima de 0 para permitir raciocínio
-                ),
+        response = await self._client.aio.models.generate_content(
+            model=self._model_id,
+            contents=transcription_text,
+            config=types.GenerateContentConfig(
+                system_instruction=_COT_SYSTEM_INSTRUCTION,
+                # Texto livre para permitir o bloco <reasoning> antes do JSON
+                response_mime_type="text/plain",
+                temperature=0.1,  # Levemente acima de 0 para permitir raciocínio
+            ),
+        )
+
+        raw_text = response.text or ""
+        logger.debug("[V2-CoT] Resposta bruta:\n%s", raw_text)
+
+        match = _JSON_BLOCK_RE.search(raw_text)
+        if not match:
+            logger.error(
+                "[V2-CoT] Bloco <json> não encontrado na resposta: %.200s",
+                raw_text,
             )
-
-            raw_text = response.text or ""
-            logger.debug("[V2-CoT] Resposta bruta:\n%s", raw_text)
-
-            match = _JSON_BLOCK_RE.search(raw_text)
-            if not match:
-                logger.error(
-                    "[V2-CoT] Bloco <json> não encontrado na resposta: %.200s",
-                    raw_text,
-                )
-                return None
-
-            json_str = match.group(1).strip()
-            return MedicalParameterExtraction.model_validate_json(json_str)
-
-        except Exception as exc:  # noqa: BLE001
-            logger.error("[V2-CoT] Falha na extração: %s", exc)
             return None
 
+        json_str = match.group(1).strip()
+        return MedicalParameterExtraction.model_validate_json(json_str)
+
+    @retry(
+        stop=stop_after_attempt(4),
+        wait=wait_exponential(multiplier=2, min=4, max=15),
+        before_sleep=lambda retry_state: logger.warning(
+            f"Falha na API Gemini no método reasoning (Tentativa {retry_state.attempt_number}/4). Aguardando..."
+        ),
+    )
     async def extract_with_reasoning(
         self, transcription_text: str
     ) -> tuple[MedicalParameterExtraction | None, str]:
-        """Extrai parâmetros e retorna também o raciocínio CoT do modelo.
+        """Extrai parâmetros e retorna também o raciocínio CoT do modelo."""
 
-        Útil para análise qualitativa e debugging do comportamento do modelo
-        em cenários de borda.
+        response = await self._client.aio.models.generate_content(
+            model=self._model_id,
+            contents=transcription_text,
+            config=types.GenerateContentConfig(
+                system_instruction=_COT_SYSTEM_INSTRUCTION,
+                response_mime_type="text/plain",
+                temperature=0.1,
+            ),
+        )
 
-        Args:
-            transcription_text: Texto transcrito para análise.
+        raw_text = response.text or ""
 
-        Returns:
-            Tupla (extração_validada, raciocínio_bruto). O raciocínio é a
-            string completa dentro das tags <reasoning>. Retorna (None, "")
-            em caso de falha.
-        """
-        try:
-            response = await self._client.aio.models.generate_content(
-                model=self._model_id,
-                contents=transcription_text,
-                config=types.GenerateContentConfig(
-                    system_instruction=_COT_SYSTEM_INSTRUCTION,
-                    response_mime_type="text/plain",
-                    temperature=0.1,
-                ),
-            )
+        reasoning_match = re.search(
+            r"<reasoning>\s*(.*?)\s*</reasoning>", raw_text, re.DOTALL
+        )
+        reasoning = reasoning_match.group(1).strip() if reasoning_match else ""
 
-            raw_text = response.text or ""
+        json_match = _JSON_BLOCK_RE.search(raw_text)
+        if not json_match:
+            return None, reasoning
 
-            reasoning_match = re.search(
-                r"<reasoning>\s*(.*?)\s*</reasoning>", raw_text, re.DOTALL
-            )
-            reasoning = reasoning_match.group(1).strip() if reasoning_match else ""
-
-            json_match = _JSON_BLOCK_RE.search(raw_text)
-            if not json_match:
-                return None, reasoning
-
-            extraction = MedicalParameterExtraction.model_validate_json(
-                json_match.group(1).strip()
-            )
-            return extraction, reasoning
-
-        except Exception as exc:  # noqa: BLE001
-            logger.error("[V2-CoT] Falha em extract_with_reasoning: %s", exc)
-            return None, ""
+        extraction = MedicalParameterExtraction.model_validate_json(
+            json_match.group(1).strip()
+        )
+        return extraction, reasoning

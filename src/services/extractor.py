@@ -1,3 +1,4 @@
+# src/services/extractor.py
 """Serviço de Extração de Parâmetros Médicos usando LLM e Schema Enforcement."""
 
 import logging
@@ -6,6 +7,7 @@ import os
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.schemas.extraction import MedicalParameterExtraction
 
@@ -40,33 +42,41 @@ class ParameterExtractor:
             raise ValueError("GEMINI_API_KEY não encontrada.")
 
         self._client = genai.Client(api_key=api_key)
-        self._model_id = "gemini-2.5-flash"
+        # Atualizado para o modelo estável mais recente
+        self._model_id = "gemini-2.0-flash"
 
+    @retry(
+        stop=stop_after_attempt(4),
+        wait=wait_exponential(multiplier=2, min=4, max=15),
+        before_sleep=lambda retry_state: logger.warning(
+            f"Falha na API Gemini (Tentativa {retry_state.attempt_number}/4). Aguardando para tentar de novo..."
+        ),
+    )
     async def extract(
         self, transcription_text: str
     ) -> MedicalParameterExtraction | None:
-        """Processa o texto e retorna um objeto Pydantic validado."""
-        try:
-            logger.info(f"Analisando texto via LLM: '{transcription_text}'")
+        """Processa o texto e retorna um objeto Pydantic validado.
 
-            response = await self._client.aio.models.generate_content(
-                model=self._model_id,
-                contents=transcription_text,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    response_mime_type="application/json",
-                    # Schema Enforcement Nativo
-                    response_schema=MedicalParameterExtraction,
-                    temperature=0.0,  # Zero alucinação
-                ),
-            )
+        Lança exceções nativas do genai em caso de falha de API,
+        permitindo que o decorador @retry faça o backoff exponencial.
+        """
+        logger.info(f"Analisando texto via LLM (V1): '{transcription_text}'")
 
-            # O SDK garante o JSON aderente. Vamos injetar no nosso Schema manualmente.
-            if response.text:
-                return MedicalParameterExtraction.model_validate_json(response.text)
+        response = await self._client.aio.models.generate_content(
+            model=self._model_id,
+            contents=transcription_text,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION,
+                response_mime_type="application/json",
+                # Schema Enforcement Nativo
+                response_schema=MedicalParameterExtraction,
+                temperature=0.0,  # Zero alucinação
+            ),
+        )
 
-            return None
+        # O SDK garante o JSON aderente ao schema.
+        # Injetamos no nosso objeto Pydantic manualmente para validações adicionais.
+        if response.text:
+            return MedicalParameterExtraction.model_validate_json(response.text)
 
-        except Exception as e:
-            logger.error(f"Erro na extração de parâmetros via LLM: {e}")
-            return None
+        return None

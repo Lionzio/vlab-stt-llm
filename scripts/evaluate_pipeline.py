@@ -46,6 +46,13 @@ from src.services.extractor_v2 import ParameterExtractorV2  # noqa: E402
 from src.services.stt import GeminiSTT, STTError  # noqa: E402
 
 # ---------------------------------------------------------------------------
+# Configurações Globais
+# ---------------------------------------------------------------------------
+# Mude para True se quiser carregar as respostas do disco (.cache/)
+# Mude para False para forçar o consumo da API do Google (Live Mode)
+USE_CACHE = False
+
+# ---------------------------------------------------------------------------
 # Configuração de logging com Rich
 # ---------------------------------------------------------------------------
 console = Console()
@@ -166,8 +173,9 @@ async def run_case(
             result.error_message = f"Arquivo de áudio não encontrado: {audio_path}"
             return result
 
-        # STT com Cache
-        cached_transcript = get_stt(str(audio_path))
+        # STT com Cache (ou Bypass se USE_CACHE for False)
+        cached_transcript = get_stt(str(audio_path)) if USE_CACHE else None
+        
         if cached_transcript is not None:
             transcript = cached_transcript
             result.stt_from_cache = True
@@ -187,8 +195,9 @@ async def run_case(
             hypothesis=transcript,
         )
 
-        # Extração com Cache
-        cached_llm = get_llm(transcript, extractor_version)
+        # Extração com Cache (ou Bypass se USE_CACHE for False)
+        cached_llm = get_llm(transcript, extractor_version) if USE_CACHE else None
+        
         if cached_llm is not None:
             extraction = MedicalParameterExtraction.model_validate(cached_llm)
             result.llm_from_cache = True
@@ -208,8 +217,8 @@ async def run_case(
             result.parameter_match = extraction.parameter is None
         else:
             result.parameter_match = (
-                extraction.parameter or ""
-            ).lower() == gt.expected_parameter.lower()
+                (extraction.parameter or "").lower() == gt.expected_parameter.lower()
+            )
         result.status_match = extraction.status == gt.expected_status
 
     except STTError as exc:
@@ -483,6 +492,12 @@ async def main() -> None:
     console.print(
         Panel.fit("[bold cyan]vlab-stt-llm — Pipeline Evaluation (A/B)[/bold cyan]")
     )
+    
+    if USE_CACHE:
+        console.print("[dim yellow]Aviso: Executando em modo CACHE (API ignorada onde aplicável).[/dim yellow]\n")
+    else:
+        console.print("[bold red]Aviso: Executando em LIVE MODE. Consumindo API do Google![/bold red]\n")
+
     ground_truth_cases = load_ground_truth(GROUND_TRUTH_PATH)
 
     stt = GeminiSTT()
