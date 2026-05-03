@@ -38,15 +38,17 @@ class ParameterExtractor:
         api_key = os.getenv("GEMINI_API_KEY", "").strip()
         if not api_key:
             raise ValueError("GEMINI_API_KEY não encontrada.")
-        
+
         self._client = genai.Client(api_key=api_key)
         self._model_id = "gemini-2.5-flash"
 
-    async def extract(self, transcription_text: str) -> MedicalParameterExtraction | None:
+    async def extract(
+        self, transcription_text: str
+    ) -> MedicalParameterExtraction | None:
         """Processa o texto e retorna um objeto Pydantic validado."""
         try:
             logger.info(f"Analisando texto via LLM: '{transcription_text}'")
-            
+
             response = await self._client.aio.models.generate_content(
                 model=self._model_id,
                 contents=transcription_text,
@@ -54,15 +56,15 @@ class ParameterExtractor:
                     system_instruction=SYSTEM_INSTRUCTION,
                     response_mime_type="application/json",
                     # Schema Enforcement Nativo
-                    response_schema=MedicalParameterExtraction, 
-                    temperature=0.0, # Zero alucinação
+                    response_schema=MedicalParameterExtraction,
+                    temperature=0.0,  # Zero alucinação
                 ),
             )
-            
+
             # O SDK garante o JSON aderente. Vamos injetar no nosso Schema manualmente.
             if response.text:
                 return MedicalParameterExtraction.model_validate_json(response.text)
-            
+
             return None
 
         except Exception as e:
