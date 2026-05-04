@@ -1,6 +1,5 @@
 name: CI Pipeline - vlab-stt-llm
 
-# O pipeline vai rodar sempre que houver um push ou pull request na branch main
 on:
   push:
     branches: [ "main" ]
@@ -19,21 +18,24 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: "3.11"
-        cache: 'pip' # Usa cache do pip para rodar mais rápido nas próximas vezes
+        cache: 'pip'
 
-    - name: Instalar dependências
+    - name: Instalar Poetry e Dependências
+      # Instalamos o Poetry e usamos a flag --no-root para evitar o erro de empacotamento
       run: |
         python -m pip install --upgrade pip
-        pip install -e .[dev]
+        pip install poetry
+        poetry install --no-root
 
     - name: Verificar formatação com Black
+      # O "poetry run" garante que as ferramentas rodem dentro do ambiente isolado
       run: |
-        black --check src tests scripts
+        poetry run black --check src tests scripts
 
     - name: Linter com Ruff
       run: |
-        ruff check src tests scripts
+        poetry run ruff check src tests scripts
 
     - name: Rodar Testes Unitários (Pytest)
       run: |
-        pytest tests/test_pipeline.py -v
+        poetry run pytest tests/test_pipeline.py -v
