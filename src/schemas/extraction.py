@@ -5,7 +5,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-# Tabela de domínio canônico para inferência determinística (Hard Rules)
+# ---------------------------------------------------------------------------
+# Tabelas de Domínio Canônico (Hard Rules)
+# ---------------------------------------------------------------------------
+
 DEFAULT_UNITS: dict[str, str] = {
     "peep": "cmH2O",
     "fio2": "%",
@@ -15,12 +18,29 @@ DEFAULT_UNITS: dict[str, str] = {
     "frequencia_cardiaca": "bpm",
 }
 
+# Limites clínicos seguros (mínimo, máximo)
+PARAMETER_BOUNDS: dict[str, tuple[float, float]] = {
+    "peep": (0.0, 25.0),
+    "fio2": (21.0, 100.0),
+    "frequencia_respiratoria": (4.0, 60.0),
+    "volume_corrente": (200.0, 800.0),
+    "frequencia_cardiaca": (20.0, 300.0),
+    # A pressão arterial (quando dita "doze por oito") não entra aqui
+    # pois o value é extraído como None, ativando REQUIRES_CLARIFICATION.
+}
+
+
+# ---------------------------------------------------------------------------
+# Schemas
+# ---------------------------------------------------------------------------
+
 
 class MedicalParameterExtraction(BaseModel):
     """Schema estrito para a saída da extração de parâmetros via voz.
 
     O LLM é forçado a preencher os campos com base neste contrato.
-    Possui uma camada híbrida de pós-processamento para garantir unidades seguras.
+    Possui uma camada híbrida de pós-processamento para garantir unidades
+    seguras e barrar valores clinicamente absurdos.
     """
 
     intent: Literal[
@@ -36,23 +56,23 @@ class MedicalParameterExtraction(BaseModel):
 
     parameter: str | None = Field(
         None,
-        description="O parâmetro médico alvo. Ex: 'peep', 'fio2', 'frequencia_respiratoria'. Se não houver, retorne nulo.",
+        description="O parâmetro médico alvo. Ex: 'peep', 'fio2'. Se não houver, retorne nulo.",
     )
 
     value: float | None = Field(
         None,
-        description="O valor numérico a ser ajustado. Se for fracionado ou não for numérico, retorne nulo e preencha 'notes'.",
+        description="O valor numérico a ser ajustado. Se for fracionado, retorne nulo e preencha 'notes'.",
     )
 
     unit: str | None = Field(
         None,
-        description="A unidade de medida inferida ou declarada. Ex: 'cmH2O', '%', 'mmHg', 'irpm'. Se não couber unidade, retorne nulo.",
+        description="A unidade de medida. Ex: 'cmH2O', '%'. Se não couber unidade, retorne nulo.",
     )
 
     status: Literal[
         "OK",
         "OK_INFERRED_UNIT",
-        "OK_INFERRED_UNIT_BY_RULE",  # Status adicionado para a abordagem híbrida
+        "OK_INFERRED_UNIT_BY_RULE",  # Adicionado pela abordagem híbrida
         "MISSING_VALUE",
         "OUT_OF_BOUNDS",
         "REQUIRES_CLARIFICATION",
@@ -69,28 +89,37 @@ class MedicalParameterExtraction(BaseModel):
 
     @model_validator(mode="after")
     def apply_deterministic_rules(self) -> "MedicalParameterExtraction":
-        """Abordagem Híbrida: Fallback Determinístico de Unidades.
+        """Abordagem Híbrida: Fallback e Limites Clínicos (Hard Rules).
 
-        Atua como uma rede de segurança. Se o modelo probabilístico (LLM)
-        falhar em inferir a unidade de medida para um parâmetro conhecido,
-        esta regra de software (hard rule) injeta a unidade padrão correta
-        e ajusta o status de auditoria. Isso garante consistência de schema
-        sem depender exclusivamente de IA.
+        Atua como uma rede de segurança contra alucinações matemáticas ou
+        esquecimentos do LLM, garantindo integridade dos dados finais.
         """
-        # Verifica se temos um parâmetro válido, mas a unidade veio vazia/nula
-        if self.parameter and not self.unit:
-            # Normaliza o parâmetro para busca
-            normalized_param = self.parameter.lower().strip()
+        if not self.parameter:
+            return self
 
-            # Se o parâmetro estiver na nossa tabela de domínio canônica
-            if normalized_param in DEFAULT_UNITS:
-                self.unit = DEFAULT_UNITS[normalized_param]
+        normalized_param = self.parameter.lower().strip()
+
+        # 1. Injeção Determinística de Unidades
+        if not self.unit and normalized_param in DEFAULT_UNITS:
+            self.unit = DEFAULT_UNITS[normalized_param]
+
+            # Só alteramos o status se ele não for um erro mais grave (ex: OUT_OF_BOUNDS)
+            if self.status in ("OK", "MISSING_VALUE"):
                 self.status = "OK_INFERRED_UNIT_BY_RULE"
 
-                # Se 'notes' estiver vazio, adiciona um rastro de auditoria
-                if not self.notes:
-                    self.notes = (
-                        f"Unidade '{self.unit}' injetada por regra determinística."
-                    )
+            note_msg = f"Unidade '{self.unit}' injetada por regra determinística."
+            self.notes = f"{self.notes} | {note_msg}" if self.notes else note_msg
+
+        # 2. Validação de Limites de Segurança (Safety Bounds)
+        if self.value is not None and normalized_param in PARAMETER_BOUNDS:
+            min_val, max_val = PARAMETER_BOUNDS[normalized_param]
+
+            if not (min_val <= self.value <= max_val):
+                self.status = "OUT_OF_BOUNDS"
+                bound_msg = (
+                    f"ALERTA CLÍNICO: Valor {self.value} fora dos limites seguros "
+                    f"para {normalized_param} ({min_val}-{max_val})."
+                )
+                self.notes = f"{self.notes} | {bound_msg}" if self.notes else bound_msg
 
         return self

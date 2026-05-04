@@ -231,6 +231,95 @@ class GeminiManager:
             return await self._generate_with_pro_fallback(contents, config)
         return await self._generate_with_flash_fallback(contents, config)
 
+    async def execute_structured_with_fallback(
+        self,
+        contents: Any,
+        response_schema: type,
+        system_instruction: str,
+        is_complex_task: bool = False,
+    ) -> Any:
+        """Executa geração estruturada (JSON com schema Pydantic) via Manager.
+
+        Usado pelo ParameterExtractor (V1) para obter output diretamente
+        validado contra um schema Pydantic, com roteamento de cotas e
+        fallback de modelos gerenciados centralmente.
+
+        Args:
+            contents: Texto ou conteúdo a ser enviado ao modelo.
+            response_schema: Classe Pydantic que define o schema de resposta.
+            system_instruction: Instrução de sistema para o modelo.
+            is_complex_task: Se True, roteia para o modelo Pro primeiro.
+
+        Returns:
+            Instância do response_schema preenchida e validada.
+
+        Raises:
+            GeminiAuthError: Se as credenciais forem inválidas (fatal).
+            GeminiQuotaError: Se todas as cotas forem esgotadas.
+            GeminiGenerationError: Se todos os fallbacks falharem.
+        """
+        config = genai_types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            response_mime_type="application/json",
+            response_schema=response_schema,
+            temperature=0.0,
+        )
+
+        response = await self.generate(
+            contents=contents,
+            config=config,
+            is_complex_task=is_complex_task,
+        )
+
+        if not response.text:
+            raise GeminiGenerationError(
+                "API retornou resposta vazia para geração estruturada."
+            )
+
+        return response_schema.model_validate_json(response.text)
+
+    async def _execute_with_quota_fallback(
+        self,
+        model: str,
+        contents: Any,
+        config: Any,
+    ) -> str:
+        """Executa geração de texto livre com fallback de cotas e modelos.
+
+        Usado pelo ParameterExtractorV2 (CoT) que precisa de resposta em
+        texto livre (não JSON estruturado) para permitir o bloco <reasoning>.
+        Roteia pela lógica de fallback do Manager e retorna o texto bruto.
+
+        Args:
+            model: Identificador do modelo preferido. Se não disponível,
+                o Manager degrada para os modelos Flash disponíveis.
+            contents: Texto ou conteúdo a ser enviado ao modelo.
+            config: GenerateContentConfig com mime_type e instrução de sistema.
+
+        Returns:
+            Texto bruto retornado pelo modelo (response.text).
+
+        Raises:
+            GeminiAuthError: Se as credenciais forem inválidas (fatal).
+            GeminiQuotaError: Se todas as cotas forem esgotadas.
+            GeminiGenerationError: Se todos os fallbacks falharem ou resposta vazia.
+        """
+        # Determina se é tarefa complexa baseado no modelo solicitado
+        is_complex = model == self.pro_model
+
+        response = await self.generate(
+            contents=contents,
+            config=config,
+            is_complex_task=is_complex,
+        )
+
+        if not response.text:
+            raise GeminiGenerationError(
+                "API retornou resposta vazia para geração de texto livre."
+            )
+
+        return response.text
+
     # ------------------------------------------------------------------
     # Roteamento Pro
     # ------------------------------------------------------------------

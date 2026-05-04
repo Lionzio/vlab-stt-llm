@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from tenacity import RetryError
 
 from src.schemas import HealthCheckResponse
 from src.services.extractor import MedicalParameterExtraction, ParameterExtractor
@@ -246,6 +247,28 @@ async def extract_from_audio(
     except HTTPException:
         # Re-propaga HTTPExceptions (400, 429, 503) geradas manualmente acima
         raise
+
+    except RetryError as exc:
+        # Desempacota a exceção original encapsulada pelo Tenacity.
+        original = exc.last_attempt.exception()
+        if isinstance(original, (STTQuotaError, GeminiQuotaError)):
+            logger.warning(
+                "RetryError desempacotado — cota esgotada após todos os retries: %s",
+                original,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Todas as cotas do serviço excedidas. Tente novamente mais tarde.",
+            ) from original
+
+        logger.error(
+            "RetryError desempacotado — falha inesperada após retries: %s",
+            original,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Falha após múltiplas tentativas: {original}",
+        ) from original
 
     except (STTAuthError, GeminiAuthError, ValueError) as exc:
         logger.error("Falha de autenticação com a API Gemini: %s", exc)
