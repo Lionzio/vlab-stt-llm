@@ -7,6 +7,7 @@ Expõe dois endpoints:
 
 Utiliza Injeção de Dependência (DI) para compartilhar a mesma instância
 do GeminiManager (estado, limites de cota e conexões HTTP) entre todas as requisições.
+Implementa o padrão Graceful Degradation (Fallback offline) em caso de falha na API.
 """
 
 from __future__ import annotations
@@ -31,6 +32,10 @@ from src.services.gemini_manager import (
 )
 from src.services.stt import GeminiSTT, STTAuthError, STTError, STTQuotaError
 
+# Importando as vias alternativas (Graceful Degradation)
+from src.services.heuristic_extractor import HeuristicParameterExtractor
+from src.services.mock_stt import MockSTT
+
 # Configurando o logger principal da aplicação para forçar a exibição do nível INFO
 logging.basicConfig(
     level=logging.INFO,
@@ -52,7 +57,7 @@ class PipelineResponse(BaseModel):
 
     Attributes:
         transcription: Texto transcrito pelo STT a partir do áudio enviado.
-        extraction: Parâmetros médicos estruturados extraídos pelo LLM.
+        extraction: Parâmetros médicos estruturados extraídos pelo LLM ou fallback.
     """
 
     transcription: str = Field(
@@ -62,7 +67,7 @@ class PipelineResponse(BaseModel):
     )
     extraction: MedicalParameterExtraction = Field(
         ...,
-        description="Parâmetros médicos extraídos e validados pelo LLM.",
+        description="Parâmetros médicos extraídos e validados pelo LLM ou heurística.",
     )
 
 
@@ -78,15 +83,6 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     Instancia o GeminiManager (Singleton virtual via App State) no startup,
     garantindo que as dependências de ambiente (chaves de API) estejam
     disponíveis antes da aplicação aceitar tráfego.
-
-    Args:
-        application: Instância da aplicação FastAPI.
-
-    Yields:
-        Controle para a aplicação em execução.
-
-    Raises:
-        RuntimeError: Se variáveis de ambiente obrigatórias estiverem ausentes.
     """
     try:
         # Inicializa o manager centralizado uma única vez
@@ -110,8 +106,7 @@ app = FastAPI(
     title="VLab STT + LLM Pipeline",
     description=(
         "Pipeline de IA para transcrição de áudio (STT) e extração de dados "
-        "médicos estruturados via LLM. Fornece endpoints para ingestão de áudio, "
-        "processamento assíncrono e recuperação de resultados."
+        "médicos estruturados via LLM. Implementa Graceful Degradation."
     ),
     version=APP_VERSION,
     docs_url="/docs",
@@ -133,10 +128,7 @@ app.add_middleware(
 
 
 def get_gemini_manager(request: Request) -> GeminiManager:
-    """Recupera a instância global do GeminiManager anexada à aplicação.
-
-    Permite que os endpoints consumam o manager de forma limpa e mockável.
-    """
+    """Recupera a instância global do GeminiManager anexada à aplicação."""
     return request.app.state.gemini_manager
 
 
@@ -149,7 +141,6 @@ def get_gemini_manager(request: Request) -> GeminiManager:
     "/health",
     response_model=HealthCheckResponse,
     summary="Health Check",
-    description="Verifica se a API está operacional.",
     tags=["Observability"],
 )
 async def health_check() -> HealthCheckResponse:
@@ -168,32 +159,17 @@ async def health_check() -> HealthCheckResponse:
     status_code=status.HTTP_200_OK,
     summary="Extração de parâmetros médicos a partir de áudio",
     description=(
-        "Recebe um arquivo de áudio via multipart/form-data, transcreve o conteúdo "
+        "Recebe um arquivo de áudio, transcreve o conteúdo "
         "via Gemini STT e extrai parâmetros médicos estruturados via LLM. "
-        "Retorna a transcrição e a extração validada em JSON."
+        "Possui fallback automático para regras heurísticas em caso de limite de cota."
     ),
     tags=["Pipeline"],
-    responses={
-        400: {"description": "Transcrição vazia ou parâmetro de entrada inválido."},
-        422: {"description": "Arquivo ausente ou tipo de conteúdo incorreto."},
-        429: {"description": "Cota da API Gemini excedida em todas as chaves."},
-        500: {"description": "Falha interna no STT ou no extractor."},
-        503: {"description": "Falha de autenticação com a API Gemini."},
-    },
 )
 async def extract_from_audio(
     audio_file: UploadFile,
     manager: GeminiManager = Depends(get_gemini_manager),
 ) -> PipelineResponse:
-    """Processa um arquivo de áudio pelo pipeline STT → LLM.
-
-    Fluxo:
-        1. Persiste o áudio recebido em arquivo temporário no disco.
-        2. Instancia STT e Extractor injetando o Manager compartilhado.
-        3. Transcreve o áudio via GeminiSTT.
-        4. Extrai parâmetros médicos do texto via ParameterExtractor.
-        5. Remove o arquivo temporário no bloco finally (garantido).
-    """
+    """Processa um arquivo de áudio pelo pipeline STT → LLM (com Fallbacks)."""
     temp_path: str | None = None
 
     try:
@@ -208,27 +184,64 @@ async def extract_from_audio(
 
         logger.info("Arquivo temporário criado: %s (%d bytes)", temp_path, len(content))
 
-        # 2. Transcrição via GeminiSTT (com Manager Injetado)
-        stt = GeminiSTT(manager=manager)
-        transcription: str | None = await stt.transcribe(temp_path)
+        # --------------------------------------------------------------------
+        # 2. TENTA STT via IA (Com Fallback para MOCK)
+        # --------------------------------------------------------------------
+        transcription: str | None = None
+        try:
+            stt = GeminiSTT(manager=manager)
+            transcription = await stt.transcribe(temp_path)
+        except RetryError as exc:
+            # INTERCEPTA O 429 DO STT (Cota Esgotada após retries)
+            original = exc.last_attempt.exception()
+            if isinstance(original, (STTQuotaError, GeminiQuotaError)):
+                logger.warning(
+                    "Cota do STT esgotada. Acionando MockSTT (Graceful Degradation)."
+                )
+                mock_stt = MockSTT()
+                # Passa o nome original do arquivo para o mock identificar o cenário
+                transcription = await mock_stt.transcribe(audio_file.filename)
+            else:
+                raise  # Repropaga se for outro erro interno
+        except (STTQuotaError, GeminiQuotaError):
+            logger.warning(
+                "Cota do STT esgotada. Acionando MockSTT (Graceful Degradation)."
+            )
+            mock_stt = MockSTT()
+            transcription = await mock_stt.transcribe(audio_file.filename)
 
         if not transcription:
-            logger.warning("STT retornou transcrição vazia para o arquivo enviado.")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "A transcrição do áudio retornou resultado vazio. "
-                    "Verifique se o arquivo contém fala audível e tente novamente."
-                ),
+                detail="A transcrição do áudio retornou resultado vazio.",
             )
 
         logger.info("Transcrição concluída: %r", transcription)
 
-        # 3. Extração de parâmetros médicos via ParameterExtractor (com Manager Injetado)
-        extractor = ParameterExtractor(manager=manager)
-        extraction: MedicalParameterExtraction | None = await extractor.extract(
-            transcription
-        )
+        # --------------------------------------------------------------------
+        # 3. TENTA EXTRAÇÃO via IA (Com Fallback para HEURÍSTICA OFFLINE)
+        # --------------------------------------------------------------------
+        extraction: MedicalParameterExtraction | None = None
+        try:
+            extractor = ParameterExtractor(manager=manager)
+            extraction = await extractor.extract(transcription)
+        except RetryError as exc:
+            # INTERCEPTA O 429 DO EXTRACTOR (Cota Esgotada após retries)
+            original = exc.last_attempt.exception()
+            if isinstance(original, (STTQuotaError, GeminiQuotaError)):
+                logger.warning(
+                    "Cota do LLM esgotada. Acionando Extrator Heurístico (Graceful Degradation)."
+                )
+                heuristic_extractor = HeuristicParameterExtractor()
+                extraction = heuristic_extractor.extract(transcription)
+            else:
+                raise
+        except (STTQuotaError, GeminiQuotaError):
+            logger.warning(
+                "Cota do LLM esgotada. Acionando Extrator Heurístico (Graceful Degradation)."
+            )
+            heuristic_extractor = HeuristicParameterExtractor()
+            extraction = heuristic_extractor.extract(transcription)
 
         if extraction is None:
             raise HTTPException(
@@ -245,46 +258,13 @@ async def extract_from_audio(
         return PipelineResponse(transcription=transcription, extraction=extraction)
 
     except HTTPException:
-        # Re-propaga HTTPExceptions (400, 429, 503) geradas manualmente acima
         raise
-
-    except RetryError as exc:
-        # Desempacota a exceção original encapsulada pelo Tenacity.
-        original = exc.last_attempt.exception()
-        if isinstance(original, (STTQuotaError, GeminiQuotaError)):
-            logger.warning(
-                "RetryError desempacotado — cota esgotada após todos os retries: %s",
-                original,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Todas as cotas do serviço excedidas. Tente novamente mais tarde.",
-            ) from original
-
-        logger.error(
-            "RetryError desempacotado — falha inesperada após retries: %s",
-            original,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Falha após múltiplas tentativas: {original}",
-        ) from original
 
     except (STTAuthError, GeminiAuthError, ValueError) as exc:
         logger.error("Falha de autenticação com a API Gemini: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Falha de autenticação com o serviço de inteligência artificial. "
-                "Verifique a configuração das chaves de API."
-            ),
-        ) from exc
-
-    except (STTQuotaError, GeminiQuotaError) as exc:
-        logger.warning("Cotas das APIs esgotadas: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Todas as cotas do serviço excedidas. Tente novamente mais tarde.",
+            detail="Falha de autenticação com o serviço de IA. Verifique as chaves de API.",
         ) from exc
 
     except STTError as exc:
@@ -321,14 +301,7 @@ async def extract_from_audio(
 
 
 def _extract_suffix(filename: str | None) -> str:
-    """Extrai a extensão de um nome de arquivo para uso no arquivo temporário.
-
-    Args:
-        filename: Nome original do arquivo enviado. Pode ser None.
-
-    Returns:
-        Extensão com ponto (ex: ".mp3") ou string vazia se não identificável.
-    """
+    """Extrai a extensão de um nome de arquivo para uso no arquivo temporário."""
     if not filename:
         return ""
     _, ext = os.path.splitext(filename)

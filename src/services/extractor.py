@@ -87,9 +87,8 @@ class ParameterExtractor:
     ) -> MedicalParameterExtraction | None:
         """Processa o texto e retorna um objeto Pydantic validado.
 
-        O roteamento (Flash -> Pro) e a rotação de chaves são resolvidos
-        pelo GeminiManager de forma transparente. Este método apenas aplica
-        backoff se a cota global do Manager falhar.
+        A rotação de chaves é resolvida pelo GeminiManager de forma transparente.
+        Este método apenas aplica backoff se a cota global do Manager falhar.
 
         Args:
             transcription_text: Texto transcrito pelo STT para análise.
@@ -109,7 +108,6 @@ class ParameterExtractor:
                 contents=transcription_text,
                 response_schema=MedicalParameterExtraction,
                 system_instruction=SYSTEM_INSTRUCTION,
-                is_complex_task=False,  # V1 foca em velocidade via Flash
             )
 
         except GeminiAuthError as exc:

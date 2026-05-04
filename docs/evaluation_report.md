@@ -1,7 +1,7 @@
 # Evaluation Report — vlab-stt-llm Pipeline (A/B Testing)
 
-**Gerado em:** 2026-05-04 12:32 UTC  
-**Tempo total de execução:** 5.4s  
+**Gerado em:** 2026-05-04 14:12 UTC  
+**Tempo total de execução:** 9.4s  
 **Casos avaliados:** 6  
 **Semaphore limit:** 2 req paralelas  
 
@@ -33,8 +33,8 @@ As métricas abaixo avaliam a precisão dos modelos em extrair Entidades e Inten
 
 | Entidade | V1 Precision | V1 Recall | **V1 F1-Score** | V2 Precision | V2 Recall | **V2 F1-Score** |
 |----------|:----------:|:---------:|:-------------:|:----------:|:---------:|:-------------:|
-| **Intent** | 100.0% | 50.0% | **66.7%** | 100.0% | 50.0% | **66.7%** |
-| **Parameter** | 100.0% | 50.0% | **66.7%** | 100.0% | 50.0% | **66.7%** |
+| **Intent** | 100.0% | 100.0% | **100.0%** | 100.0% | 100.0% | **100.0%** |
+| **Parameter** | 100.0% | 100.0% | **100.0%** | 100.0% | 100.0% | **100.0%** |
 
 ## Análise Detalhada por Caso (Comparativo)
 
@@ -56,14 +56,11 @@ As métricas abaixo avaliam a precisão dos modelos em extrair Entidades e Inten
 
 | Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |
 |-------|----------|-------------|----------|-------------|----------|
-| intent | `ajustar_parametro` | `N/A` | ❌ | `N/A` | ❌ |
-| param | `peep` | `N/A` | ❌ | `N/A` | ❌ |
-| status | `OK_INFERRED_UNIT` | `N/A` | ❌ | `N/A` | ❌ |
+| intent | `ajustar_parametro` | `ajustar_parametro` | ✅ | `ajustar_parametro` | ✅ |
+| param | `peep` | `peep` | ✅ | `peep` | ✅ |
+| status | `OK_INFERRED_UNIT` | `OK_INFERRED_UNIT` | ✅ | `OK_INFERRED_UNIT` | ✅ |
 
-> **Análise:** O LLM deve inferir a unidade canônica. Unidade obtida: `N/A`.
-
-> ⚠️ **Erro V1:** `Extractor retornou None.`
-> ⚠️ **Erro V2:** `Extractor retornou None.`
+> **Análise:** O LLM deve inferir a unidade canônica. Unidade obtida: `cmH2O`.
 
 ### TC-003 — `ambiguidade_terminologica`
 
@@ -83,14 +80,11 @@ As métricas abaixo avaliam a precisão dos modelos em extrair Entidades e Inten
 
 | Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |
 |-------|----------|-------------|----------|-------------|----------|
-| intent | `ajustar_parametro` | `N/A` | ❌ | `N/A` | ❌ |
-| param | `fio2` | `N/A` | ❌ | `N/A` | ❌ |
-| status | `OUT_OF_BOUNDS` | `N/A` | ❌ | `N/A` | ❌ |
+| intent | `ajustar_parametro` | `ajustar_parametro` | ✅ | `ajustar_parametro` | ✅ |
+| param | `fio2` | `fio2` | ✅ | `fio2` | ✅ |
+| status | `OUT_OF_BOUNDS` | `OUT_OF_BOUNDS` | ✅ | `OUT_OF_BOUNDS` | ✅ |
 
-> **Análise:** Valor inválido intencionalmente (FiO2=200%). O Pydantic deve bloquear. Status obtido: `N/A`.
-
-> ⚠️ **Erro V1:** `Extractor retornou None.`
-> ⚠️ **Erro V2:** `Extractor retornou None.`
+> **Análise:** Valor inválido intencionalmente (FiO2=200%). O Pydantic deve bloquear. Status obtido: `OUT_OF_BOUNDS`.
 
 ### TC-005 — `comando_incompleto`
 
@@ -110,14 +104,11 @@ As métricas abaixo avaliam a precisão dos modelos em extrair Entidades e Inten
 
 | Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |
 |-------|----------|-------------|----------|-------------|----------|
-| intent | `ajustar_parametro` | `N/A` | ❌ | `N/A` | ❌ |
-| param | `volume_corrente` | `N/A` | ❌ | `N/A` | ❌ |
-| status | `OK` | `N/A` | ❌ | `N/A` | ❌ |
+| intent | `ajustar_parametro` | `ajustar_parametro` | ✅ | `ajustar_parametro` | ✅ |
+| param | `volume_corrente` | `volume_corrente` | ✅ | `volume_corrente` | ✅ |
+| status | `OK` | `OK` | ✅ | `OK` | ✅ |
 
 > **Análise:** Artefato de ruído inserido. O LLM deve ignorar tokens espúrios e extrair o valor corretamente.
-
-> ⚠️ **Erro V1:** `Extractor retornou None.`
-> ⚠️ **Erro V2:** `Extractor retornou None.`
 
 ### Conclusão Comparativa
 A abordagem **V1** é recomendada por menor latência para produção direta. A **V2** traz ganhos interpretativos para ambientes de testes e homologação rigorosa de hardware médico.

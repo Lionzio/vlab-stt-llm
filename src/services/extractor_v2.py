@@ -116,9 +116,8 @@ class ParameterExtractorV2:
         )
 
         try:
-            # Roteamento transparente via Manager
+            # Roteamento transparente via Manager (apenas com fallback de cota/Flash)
             raw_text = await self._manager._execute_with_quota_fallback(
-                model=self._manager.pro_model,
                 contents=transcription_text,
                 config=config,
             )
@@ -164,8 +163,8 @@ class ParameterExtractorV2:
         )
 
         try:
+            # Roteamento transparente via Manager
             raw_text = await self._manager._execute_with_quota_fallback(
-                model=self._manager.pro_model,
                 contents=transcription_text,
                 config=config,
             )

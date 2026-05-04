@@ -84,5 +84,53 @@
     "value": 600.0,
     "unit": "ml",
     "status": "OK"
+  },
+  "324b6a8667411c8bedcc9d50ec16513b1eedf7016002f00112580615008af210": {
+    "intent": "ajustar_parametro",
+    "parameter": "peep",
+    "value": 5.0,
+    "unit": "cmH2O",
+    "status": "OK_INFERRED_UNIT",
+    "notes": null
+  },
+  "8af837d506958dc8e12cd4cb5ef3a3b18b546d7eeb003692f053cd464618434b": {
+    "intent": "ajustar_parametro",
+    "parameter": "fio2",
+    "value": 200.0,
+    "unit": "%",
+    "status": "OUT_OF_BOUNDS",
+    "notes": "FiO2 não pode ser maior que 100% | ALERTA CLÍNICO: Valor 200.0 fora dos limites seguros para fio2 (21.0-100.0)."
+  },
+  "2548911c34d727e393052b321aa948dae147712796897072b28885df8c8b8011": {
+    "intent": "ajustar_parametro",
+    "parameter": "volume_corrente",
+    "value": 600.0,
+    "unit": "mL",
+    "status": "OK",
+    "notes": null
+  },
+  "edb6d2099cb062e87a8664ef612fbe8afefc5ae6c58e281dd09d8d5bb9671f0a": {
+    "intent": "ajustar_parametro",
+    "parameter": "peep",
+    "value": 5.0,
+    "unit": "cmH2O",
+    "status": "OK_INFERRED_UNIT",
+    "notes": "Unidade inferida para peep."
+  },
+  "d8660895ad9e1acbf513539b1d45bbd7cf80fb0e1023ee801b78b65e19122fc7": {
+    "intent": "ajustar_parametro",
+    "parameter": "fio2",
+    "value": 200.0,
+    "unit": "%",
+    "status": "OUT_OF_BOUNDS",
+    "notes": "Valor 200.0 para fio2 está fora dos limites clínicos [21, 100]. | ALERTA CLÍNICO: Valor 200.0 fora dos limites seguros para fio2 (21.0-100.0)."
+  },
+  "9d17584e5565d3138ad8429c7d503ad2253f20c3e1fa4c232c7976ea6154db2b": {
+    "intent": "ajustar_parametro",
+    "parameter": "volume_corrente",
+    "value": 600.0,
+    "unit": "ml",
+    "status": "OK",
+    "notes": null
   }
 }
