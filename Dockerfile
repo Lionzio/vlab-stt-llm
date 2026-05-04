@@ -1,50 +1,27 @@
 # ==============================================================================
-# Stage 1 — Builder: instala dependências em ambiente isolado
+# Imagem base
 # ==============================================================================
-FROM python:3.10-slim AS builder
+FROM python:3.11-slim
 
+# Impede a criação de arquivos .pyc e diz ao Poetry para NÃO criar .venv
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    POETRY_VERSION=1.8.3 \
-    POETRY_VIRTUALENVS_CREATE=false \
-    POETRY_NO_INTERACTION=1 \
-    POETRY_CACHE_DIR=/tmp/poetry_cache
-
-RUN pip install --upgrade pip && \
-    pip install "poetry==${POETRY_VERSION}"
+    POETRY_VIRTUALENVS_CREATE=false
 
 WORKDIR /app
 
-# Copia somente os manifests primeiro — maximiza o cache de camadas do Docker
+# Instala o Poetry globalmente no container
+RUN pip install --no-cache-dir poetry
+
+# Copia APENAS os manifests primeiro (Isso faz o build ser instantâneo nas próximas vezes)
 COPY pyproject.toml poetry.lock ./
 
-RUN poetry install --without dev --no-root && \
-    rm -rf ${POETRY_CACHE_DIR}
+# Instala apenas as dependências de produção
+# A flag --no-root é a mágica que evita o erro "No file/folder found"
+RUN poetry install --only main --no-root
 
-# ==============================================================================
-# Stage 2 — Runtime: imagem final enxuta sem artefatos de build
-# ==============================================================================
-FROM python:3.10-slim AS runtime
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
-
-# Cria usuário non-root para execução segura
-RUN addgroup --system appgroup && \
-    adduser --system --ingroup appgroup --no-create-home appuser
-
-WORKDIR /app
-
-# Copia pacotes instalados pelo builder
-COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
-
-# Copia o código-fonte da aplicação
-COPY src/ ./src/
-
-RUN chown -R appuser:appgroup /app
-
-USER appuser
+# Agora copia o resto do código da aplicação
+COPY . /app
 
 EXPOSE 8000
 
