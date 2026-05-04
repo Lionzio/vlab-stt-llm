@@ -1,0 +1,132 @@
+[
+  {
+    "id": "TC-001",
+    "scenario_type": "ideal",
+    "transcription": "ajustar a frequência respiratória para quinze incursões por minuto",
+    "expected_extraction": {
+      "intent": "ajustar_parametro",
+      "parameter": "frequencia_respiratoria",
+      "value": 15.0,
+      "unit": "irpm",
+      "status": "OK",
+      "notes": null
+    }
+  },
+  {
+    "id": "TC-002",
+    "scenario_type": "erro_stt_ortografico",
+    "transcription": "coloca a pipe em cinco",
+    "expected_extraction": {
+      "intent": "ajustar_parametro",
+      "parameter": "peep",
+      "value": 5.0,
+      "unit": "cmH2O",
+      "status": "OK_INFERRED_UNIT",
+      "notes": "Unidade deduzida pelo domínio clínico."
+    }
+  },
+  {
+    "id": "TC-003",
+    "scenario_type": "unidade_omitida",
+    "transcription": "muda a f i o dois pra quarenta",
+    "expected_extraction": {
+      "intent": "ajustar_parametro",
+      "parameter": "fio2",
+      "value": 40.0,
+      "unit": "%",
+      "status": "OK_INFERRED_UNIT",
+      "notes": "Unidade deduzida pelo domínio clínico."
+    }
+  },
+  {
+    "id": "TC-004",
+    "scenario_type": "fora_do_padrao_limites",
+    "transcription": "configurar peep para trinta e cinco",
+    "expected_extraction": {
+      "intent": "ajustar_parametro",
+      "parameter": "peep",
+      "value": 35.0,
+      "unit": "cmH2O",
+      "status": "OUT_OF_BOUNDS",
+      "notes": "Valor fora do limite seguro (0-25)."
+    }
+  },
+  {
+    "id": "TC-005",
+    "scenario_type": "comando_incompleto",
+    "transcription": "eu quero aumentar a frequência respiratória",
+    "expected_extraction": {
+      "intent": "ajustar_parametro",
+      "parameter": "frequencia_respiratoria",
+      "value": null,
+      "unit": null,
+      "status": "MISSING_VALUE",
+      "notes": "Falta o valor numérico para o ajuste."
+    }
+  },
+  {
+    "id": "TC-006",
+    "scenario_type": "ruido_simulado",
+    "transcription": "ajusta [tosse] a fio dois pra cem [barulho de alarme] por cento",
+    "expected_extraction": {
+      "intent": "ajustar_parametro",
+      "parameter": "fio2",
+      "value": 100.0,
+      "unit": "%",
+      "status": "OK",
+      "notes": null
+    }
+  },
+  {
+    "id": "TC-007",
+    "scenario_type": "ambiguidade_fracionada",
+    "transcription": "pressão tá doze por oito",
+    "expected_extraction": {
+      "intent": "consultar_status",
+      "parameter": "pressao_arterial",
+      "value": null,
+      "unit": "mmHg",
+      "status": "REQUIRES_CLARIFICATION",
+      "notes": "Valores fracionados exigem clarificação sistólica/diastólica."
+    }
+  },
+  {
+    "id": "TC-008",
+    "scenario_type": "intencao_secundaria",
+    "transcription": "pode silenciar o alarme da pipe por favor",
+    "expected_extraction": {
+      "intent": "silenciar_alarme",
+      "parameter": "peep",
+      "value": null,
+      "unit": null,
+      "status": "OK",
+      "notes": null
+    }
+  },
+  {
+    "id": "TC-009",
+    "scenario_type": "alucinacao_stt_numero_extenso",
+    "transcription": "bota a frequência respiratória em meia dúzia",
+    "expected_extraction": {
+      "intent": "ajustar_parametro",
+      "parameter": "frequencia_respiratoria",
+      "value": 6.0,
+      "unit": "irpm",
+      "status": "OK_INFERRED_UNIT",
+      "notes": "Conversão léxica aplicada."
+    }
+  },
+  {
+    "id": "TC-010",
+    "scenario_type": "fora_do_dominio",
+    "transcription": "que horas vai ser a troca de plantão",
+    "expected_extraction": {
+      "intent": "desconhecida",
+      "parameter": null,
+      "value": null,
+      "unit": null,
+      "status": "ERROR",
+      "notes": "Comando não reconhecido pelo sistema de suporte à vida."
+    }
+  }
+]

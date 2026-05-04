@@ -1,7 +1,7 @@
 # Evaluation Report — vlab-stt-llm Pipeline (A/B Testing)
 
-**Gerado em:** 2026-05-04 14:12 UTC  
-**Tempo total de execução:** 9.4s  
+**Gerado em:** 2026-05-04 15:05 UTC  
+**Tempo total de execução:** 0.2s  
 **Casos avaliados:** 6  
 **Semaphore limit:** 2 req paralelas  
 
