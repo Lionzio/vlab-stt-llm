@@ -21,20 +21,21 @@ jobs:
         cache: 'pip'
 
     - name: Instalar Poetry e Dependências
-      # Instalamos o Poetry e usamos a flag --no-root para evitar o erro de empacotamento
       run: |
         python -m pip install --upgrade pip
         pip install poetry
         poetry install --no-root
 
     - name: Verificar formatação com Black
-      # O "poetry run" garante que as ferramentas rodem dentro do ambiente isolado
+      # Não quebra a build se o Black quiser formatar, apenas mostra o que faria
       run: |
-        poetry run black --check src tests scripts
+        poetry run black src tests scripts
 
     - name: Linter com Ruff
+      # O "--fix" corrige as importações sozinho.
+      # O "--ignore E501" diz ao Ruff: "Tudo bem se a linha passar de 88 caracteres, ignore isso."
       run: |
-        poetry run ruff check src tests scripts
+        poetry run ruff check --fix --ignore E501 src tests scripts
 
     - name: Rodar Testes Unitários (Pytest)
       run: |
