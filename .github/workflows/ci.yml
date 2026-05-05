@@ -53,7 +53,7 @@ jobs:
     - name: Instalar dependências do Frontend
       run: |
         cd frontend
-        npm ci
+        npm install
 
     - name: Build do Frontend (Validação TypeScript/React)
       run: |
