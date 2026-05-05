@@ -16,6 +16,11 @@ interface PipelineResponse {
   extraction: Extraction;
 }
 
+// Configuração Cloud-Ready: Lê a URL da API do ambiente.
+// Em produção (Vercel), usará a URL real.
+// Localmente, se não houver .env, faz fallback para o localhost:8000.
+const VITE_API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
 function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [response, setResponse] = useState<PipelineResponse | null>(null);
@@ -46,7 +51,8 @@ function App() {
     formData.append("audio_file", file);
 
     try {
-      const res = await fetch("http://localhost:8000/api/v1/extract-from-audio", {
+      // AJUSTE CIRÚRGICO: Usando a constante dinâmica com Template Literals
+      const res = await fetch(`${VITE_API_URL}/api/v1/extract-from-audio`, {
         method: "POST",
         body: formData,
       });
@@ -81,6 +87,8 @@ function App() {
             <h1 className="text-3xl font-bold text-slate-800">VLab Command Center</h1>
           </div>
           <p className="text-slate-500">Interface de Avaliação de Comandos (Mock Data)</p>
+          {/* Opcional: Mostra a API conectada para debug em portfólio */}
+          <p className="text-xs text-slate-400 font-mono">Connected to: {VITE_API_URL}</p>
         </header>
 
         {/* Área de Upload */}
