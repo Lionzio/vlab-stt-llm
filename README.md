@@ -91,6 +91,18 @@ poetry run pytest tests/test_pipeline.py -v
 poetry run python scripts/evaluate_pipeline.py
 ```
 
+### 4. Interface visual (Micro-frontend)
+Para facilitar a avaliação da Prova de Conceito, o projeto inclui um painel interativo em React/Vite. Ele permite enviar os áudios de teste e visualizar o *Schema Enforcement* em tempo real.
+
+Com o servidor FastAPI rodando no terminal 1, abra um segundo terminal e execute:
+
+```bash
+cd frontend
+npm install
+npm run dev
+
+Acesse http://localhost:5173/, clique para anexar um áudio da pasta data/audio_samples/ e veja a validação atuar.
+
 ## Documentação adicional
 
 Detalhes sobre a construção do sistema podem ser encontrados na pasta `docs/`:

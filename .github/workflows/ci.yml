@@ -1,3 +1,4 @@
+```yaml
 name: CI Pipeline - vlab-stt-llm
 
 on:
@@ -7,9 +8,8 @@ on:
     branches: [ "main" ]
 
 jobs:
-  test-and-lint:
+  test-backend:
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout do repositório
       uses: actions/checkout@v4
@@ -27,7 +27,6 @@ jobs:
         poetry install --no-root
 
     - name: Verificar formatação com Black
-      # Não quebra a build se o Black quiser formatar, apenas mostra o que faria
       run: |
         poetry run black src tests scripts
 
@@ -38,3 +37,26 @@ jobs:
     - name: Rodar Testes Unitários (Pytest)
       run: |
         poetry run pytest tests/test_pipeline.py -v
+
+  build-frontend:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout do repositório
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: './frontend/package-lock.json'
+
+    - name: Instalar dependências do Frontend
+      run: |
+        cd frontend
+        npm ci
+
+    - name: Build do Frontend (Validação TypeScript/React)
+      run: |
+        cd frontend
+        npm run build
