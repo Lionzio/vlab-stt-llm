@@ -25,4 +25,6 @@ COPY . /app
 
 EXPOSE 8000
 
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Utiliza o shell para interpretar a variável $PORT dinamicamente.
+# Caso a variável não exista (rodando docker run localmente), faz o fallback para 8000.
+CMD ["sh", "-c", "uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

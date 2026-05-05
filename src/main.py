@@ -36,10 +36,11 @@ from src.services.stt import GeminiSTT, STTAuthError, STTError, STTQuotaError
 from src.services.heuristic_extractor import HeuristicParameterExtractor
 from src.services.mock_stt import MockSTT
 
-# Configurando o logger principal da aplicação para forçar a exibição do nível INFO
+# Configurando o logger principal da aplicação para formato Cloud-Ready
 logging.basicConfig(
     level=logging.INFO,
-    format="%(levelname)s:\t  %(message)s",
+    format="%(asctime)s | %(levelname)-8s | %(name)s : %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
     force=True,  # Sobrescreve as configurações de log do uvicorn
 )
 logger = logging.getLogger(__name__)
@@ -99,7 +100,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 
 # ---------------------------------------------------------------------------
-# Instância FastAPI
+# Instância FastAPI e Segurança (CORS)
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
@@ -114,9 +115,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Leitura dinâmica das origens permitidas (Cloud Readiness)
+# Fallback automático para o frontend local caso a variável não seja injetada
+allowed_origins_env = os.getenv(
+    "ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+)
+origins = [
+    origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()
+]
+
+logger.info("CORS configurado para aceitar requisições de: %s", origins)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
