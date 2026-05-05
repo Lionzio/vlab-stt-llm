@@ -1,4 +1,3 @@
-```yaml
 name: CI Pipeline - vlab-stt-llm
 
 on:
