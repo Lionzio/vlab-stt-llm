@@ -21,20 +21,18 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from tenacity import RetryError
 
 from src.schemas import HealthCheckResponse
 from src.services.extractor import MedicalParameterExtraction, ParameterExtractor
 from src.services.gemini_manager import (
     GeminiAuthError,
     GeminiManager,
-    GeminiQuotaError,
 )
-from src.services.stt import GeminiSTT, STTAuthError, STTError, STTQuotaError
 
 # Importando as vias alternativas (Graceful Degradation)
 from src.services.heuristic_extractor import HeuristicParameterExtractor
 from src.services.mock_stt import MockSTT
+from src.services.stt import GeminiSTT
 
 # Configurando o logger principal da aplicação para formato Cloud-Ready
 logging.basicConfig(

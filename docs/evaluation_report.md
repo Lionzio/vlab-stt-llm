@@ -1,7 +1,7 @@
 # Evaluation Report — vlab-stt-llm Pipeline (A/B Testing)
 
-**Gerado em:** 2026-05-05 00:44 UTC  
-**Tempo total de execução:** 0.2s  
+**Gerado em:** 2026-05-05 15:59 UTC  
+**Tempo total de execução:** 11.1s  
 **Casos avaliados:** 6  
 **Semaphore limit:** 2 req paralelas  
 
@@ -23,9 +23,9 @@
 | TC-003 | `ambiguidade_terminologica` | 0.0% | 0.0% | ✓ |
 | TC-004 | `fora_do_padrao_limites` | 33.3% | 17.9% | ✓ |
 | TC-005 | `comando_incompleto` | 0.0% | 0.0% | ✓ |
-| TC-006 | `ruido_simulado` | 50.0% | 26.8% | ✓ |
+| TC-006 | `ruido_simulado` | 25.0% | 12.5% | — |
 
-**WER médio:** `17.2%` | **CER médio:** `9.0%`
+**WER médio:** `13.1%` | **CER médio:** `6.6%`
 
 ### Avaliação de Extração (Precision, Recall, F1-Score)
 
@@ -100,7 +100,7 @@ As métricas abaixo avaliam a precisão dos modelos em extrair Entidades e Inten
 
 ### TC-006 — `ruido_simulado`
 
-**Transcrição Obtida:** `ajusta o volume corrente para 600 coff coff mililitros`
+**Transcrição Obtida:** `ajusta o volume corrente para seiscentos mililitros`
 
 | Campo | Esperado | Obtido (V1) | Match V1 | Obtido (V2) | Match V2 |
 |-------|----------|-------------|----------|-------------|----------|

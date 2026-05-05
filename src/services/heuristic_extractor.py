@@ -6,9 +6,8 @@ baseada em regras (Regex e dicionários) para garantir a continuidade do serviç
 (Graceful Degradation), retornando o mesmo contrato Pydantic.
 """
 
-import re
 import logging
-from typing import Any
+import re
 
 from src.schemas.extraction import MedicalParameterExtraction
 

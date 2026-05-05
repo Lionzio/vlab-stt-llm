@@ -1,8 +1,8 @@
 # src/services/mock_stt.py
 """STT Mock para Bypass Emergencial (Fallback de Cota)."""
 
-import os
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 

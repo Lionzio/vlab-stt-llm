@@ -87,6 +87,23 @@ DOCS_DIR = REPO_ROOT / "docs"
 REPORT_PATH = DOCS_DIR / "evaluation_report.md"
 
 # ---------------------------------------------------------------------------
+# Augmentation (opcional — só ativo se o módulo existir)
+# ---------------------------------------------------------------------------
+
+try:
+    from scripts.audio_augmentation import inject_hospital_noise as _inject_noise
+
+    NOISE_SAMPLE_PATH = DATA_DIR / "noise_samples" / "hospital_ambient.mp3"
+    AUGMENTATION_AVAILABLE = True
+except ImportError:
+    AUGMENTATION_AVAILABLE = False
+    NOISE_SAMPLE_PATH = None  # type: ignore[assignment]
+
+    def _inject_noise(*args: Any, **kwargs: Any) -> None:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Modelos de dados
 # ---------------------------------------------------------------------------
 
@@ -244,36 +261,44 @@ async def run_case(
     extractor_version: str,
     semaphore: asyncio.Semaphore,
 ) -> CaseResult:
-    """Executa o pipeline completo para um único caso de teste.
-
-    O Semaphore garante que no máximo `_SEMAPHORE_LIMIT` chamadas à API
-    estejam ativas simultaneamente, mitigando erros 429 no Free Tier.
-    O cache é consultado antes de qualquer chamada de rede.
-
-    Args:
-        gt: Caso de teste com os dados de referência.
-        stt: Instância do serviço de transcrição.
-        extractor: Instância do extrator (V1 ou V2).
-        extractor_version: Label para indexação de cache e relatório.
-        semaphore: Semáforo compartilhado entre todos os casos concorrentes.
-
-    Returns:
-        CaseResult preenchido com todas as métricas do caso.
-    """
+    """Executa o pipeline completo para um único caso de teste."""
     result = CaseResult(ground_truth=gt, extractor_version=extractor_version)
-    audio_path = AUDIO_DIR / gt.audio_filename
+    original_audio_path = AUDIO_DIR / gt.audio_filename
     t_start = time.monotonic()
 
     try:
-        if not audio_path.exists():
-            result.error_message = f"Arquivo não encontrado: {audio_path}"
+        if not original_audio_path.exists():
+            result.error_message = f"Arquivo não encontrado: {original_audio_path}"
             logger.warning("[%s] %s", gt.id, result.error_message)
             return result
+
+        # --- SPRINT 9: TESTE DE STRESS (DATA AUGMENTATION) ---
+        target_audio_path = original_audio_path
+        ignore_cache_for_stress = False
+
+        if gt.scenario_type == "ruido_simulado" and AUGMENTATION_AVAILABLE:
+            stress_output_path = AUDIO_DIR / f"{gt.id}_stress_tested.mp3"
+            logger.info("[%s] Iniciando Teste de Stress (Injeção de Ruído)...", gt.id)
+
+            target_path_str = _inject_noise(
+                clean_audio_path=original_audio_path,
+                noise_audio_path=NOISE_SAMPLE_PATH,
+                output_path=stress_output_path,
+            )
+            target_audio_path = (
+                Path(target_path_str) if target_path_str else original_audio_path
+            )
+            # Força consulta à API para ver o desempenho real contra o ruído gerado agora
+            ignore_cache_for_stress = True
+        # --------------------------------------------------------
 
         # ------------------------------------------------------------------
         # Etapa 1 — STT (cache → API com Semaphore)
         # ------------------------------------------------------------------
-        cached_transcript = get_stt(str(audio_path)) if USE_CACHE else None
+        # Modificamos a regra de cache para ignorar se for um teste de stress
+        cached_transcript = None
+        if USE_CACHE and not ignore_cache_for_stress:
+            cached_transcript = get_stt(str(target_audio_path))
 
         if cached_transcript is not None:
             transcript = cached_transcript
@@ -282,14 +307,15 @@ async def run_case(
         else:
             async with semaphore:
                 logger.info("[%s] STT via API (semaphore adquirido)...", gt.id)
-                transcript = await stt.transcribe(str(audio_path))
+                transcript = await stt.transcribe(str(target_audio_path))
 
             if not transcript:
                 result.error_message = "STT retornou transcrição vazia."
                 logger.warning("[%s] %s", gt.id, result.error_message)
                 return result
 
-            set_stt(str(audio_path), transcript)
+            if not ignore_cache_for_stress:
+                set_stt(str(target_audio_path), transcript)
 
         result.stt_success = True
         result.stt_transcript = transcript

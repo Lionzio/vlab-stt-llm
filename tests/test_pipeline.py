@@ -6,7 +6,6 @@ de segurança clínica contra alucinações matemáticas ou omissões do LLM.
 Testes executados 100% offline.
 """
 
-import pytest
 from src.schemas.extraction import MedicalParameterExtraction
 
 

@@ -132,5 +132,21 @@
     "unit": "ml",
     "status": "OK",
     "notes": null
+  },
+  "2c238fa9237efefe307dcc73a342826beeeb467ef8dafdf9ad9bee1f34674f11": {
+    "intent": "ajustar_parametro",
+    "parameter": "volume_corrente",
+    "value": 600.0,
+    "unit": "mL",
+    "status": "OK",
+    "notes": null
+  },
+  "5ac5f0e51794beb169bc391c9a73bbd37704f3f2d00dc7414140bde80d7e29ee": {
+    "intent": "ajustar_parametro",
+    "parameter": "volume_corrente",
+    "value": 600.0,
+    "unit": "ml",
+    "status": "OK",
+    "notes": null
   }
 }
