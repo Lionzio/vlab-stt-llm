@@ -1,30 +1,33 @@
-# Domain Analysis: vlab-stt-llm
-**Versão:** 1.0.0 | **Status:** Baseline de Avaliação (Sprint 4) | **Classificação:** Uso Interno — Desafio Técnico
+# Análise de Domínio: vlab-stt-llm
+
+**Versão:** 1.0.0 | **Status:** Baseline de avaliação | **Classificação:** Uso interno
 
 ---
 
-## 1. Visão Geral e Estratégia
+## 1. Visão geral e estratégia
 
-### 1.1 Contexto e Motivação
+### 1.1 Contexto e motivação
 
-Profissionais de saúde em ambientes de alta pressão — UTIs, centros cirúrgicos, emergências — interagem constantemente com equipamentos clínicos complexos via interfaces físicas que exigem atenção visual e motora. A interação por voz representa uma oportunidade de reduzir a carga cognitiva e aumentar a velocidade de resposta em cenários críticos, desde que implementada com extremo rigor clínico e de engenharia de software.
+Profissionais de saúde em ambientes como UTIs e centros cirúrgicos interagem com equipamentos complexos que exigem atenção visual e motora. A interface por voz surge como uma alternativa para reduzir a carga cognitiva, desde que implementada com mecanismos estritos de segurança, pois qualquer erro na interpretação de parâmetros (como em um ventilador pulmonar) possui impacto direto na segurança do paciente.
 
-O `vlab-stt-llm` é um pipeline experimental que valida a viabilidade técnica de capturar **comandos de voz em português clínico**, transcrevê-los e extrair parâmetros médicos estruturados com semântica validada. O sistema adota uma arquitetura híbrida: combina a flexibilidade da IA Generativa (LLMs) com a rigidez de regras determinísticas (Regex/Pydantic) para garantir resiliência contra indisponibilidade de rede e segurança contra alucinações (Fail-Fast).
+O projeto `vlab-stt-llm` valida a viabilidade de capturar comandos de voz em português clínico, transcrevê-los e extrair os parâmetros médicos estruturados. A solução utiliza uma arquitetura híbrida: combina a flexibilidade dos Modelos de Linguagem (LLMs) com regras determinísticas locais para garantir a conformidade dos dados.
 
-### 1.2 Arquitetura do Pipeline Híbrido (Graceful Degradation)
-O pipeline foi projetado prevendo falhas de infraestrutura. Se a Inteligência Artificial falhar (Rate Limit ou Network Timeout), ferramentas offline assumem o controle, garantindo que o contrato JSON seja sempre respeitado.
+### 1.2 Arquitetura do pipeline
+
+A arquitetura foi projetada para prever falhas de rede e indisponibilidade de APIs. Caso o serviço de IA retorne erros (como limite de taxa/HTTP 429), ferramentas baseadas em heurísticas offline assumem a extração.
+
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                            PIPELINE vlab-stt-llm                            │
 │                                                                             │
-│  ┌──────────┐  Audio   ┌───────────────┐ Transcrição ┌──────────────────┐   │
+│  ┌──────────┐  Áudio   ┌───────────────┐    Texto    ┌──────────────────┐   │
 │  │ Entrada  │─────────▶│ STT Engine    ├────────────▶│ Extractor Engine │   │
-│  │ de Voz   │          │ (IA ou Mock)  │             │ (IA ou Fallback) │   │
+│  │ de Voz   │          │ (IA ou Mock)  │             │ (IA ou Heurística│   │
 │  └──────────┘          └───────────────┘             └────────┬─────────┘   │
 │                                                               │             │
 │                                                   ┌───────────▼───────────┐ │
-│                                                   │ Pydantic Validator    │ │
-│                                                   │ (Hard Safety Bounds)  │ │
+│                                                   │ Validador Pydantic    │ │
+│                                                   │ (Regras Determinísticas │
 │                                                   └───────────┬───────────┘ │
 │                                                               │             │
 │                                                   ┌───────────▼───────────┐ │
@@ -32,7 +35,44 @@ O pipeline foi projetado prevendo falhas de infraestrutura. Se a Inteligência A
 │                                                   │   (Output Final)      │ │
 │                                                   └───────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────────────┘
-Etapa 1 — STT (Speech-to-Text): Responsável por transformar o áudio em texto. A via principal é o Gemini STT. Em caso de falha de cota, um Mock STT de bypass é acionado.Etapa 2 — Motor de Extração: Interpreta a intenção do usuário. A via principal usa LLM para lidar com o jargão. A Via de Fallback usa Regex e Dicionários de Expressões Regulares (offline).Etapa 3 — Validação Determinística: O Pydantic atua como um "firewall clínico". Independentemente se os dados vieram da IA ou do Fallback, ele impõe regras matemáticas clínicas, infere unidades ou aborta a operação (Safety Bounds).2. Catálogo de Comandos e Baseline Clínico2.1 Justificativa do Baseline (Por que PEEP, FiO2 e FR?)Para estruturar o escopo deste protótipo, definimos um baseline de três parâmetros críticos associados à Ventilação Mecânica Invasiva (VMI). A escolha não foi aleatória:PEEP (Positive End-Expiratory Pressure): Teste de robustez a jargões, visto que médicos frequentemente omitem a unidade e usam aportuguesamentos ("pipe").FiO2 (Fração Inspirada de Oxigênio): Teste de segurança rigorosa (Safety Bounds). Um erro de transcrição que eleve a FiO2 para 200% (impossível fisicamente) deve ser detectado e bloqueado pela arquitetura.FR (Frequência Respiratória): Teste de ambiguidade de unidades, pois transita entre siglas (irpm) e extensos ("incursões por minuto").2.2 Catálogo de Parâmetros e Limites Clínicos (Safety Bounds)As regras abaixo estão codificadas diretamente na camada de validação do Pydantic (PARAMETER_BOUNDS), impedindo que alucinações matemáticas da IA cheguem aos sistemas do hospital.Parâmetro CanônicoAlias Clínico ComumUnidade PadrãoIntervalo Seguro (Bounds)Risco de QuebrapeepPEEP, pipecmH2O0.0 a 25.0Barotrauma / Colapso Alveolarfio2FiO2, fi de o2%21.0 a 100.0Toxicidade por O2frequencia_respiratoriaFR, respiraçãoirpm4.0 a 60.0Alcalose / Acidose Respiratóriavolume_correnteVC, Vtml200.0 a 800.0Volutraumapressao_arterialPA, pressãommHgRequer Sistólica/DiastólicaHipotensão / Hipertensão3. Schema de Interface (Contract)O payload abaixo representa o contrato estrito (MedicalParameterExtraction) entre o pipeline de IA e o sistema consumidor (ex: CLP do ventilador pulmonar).JSON{
+```
+
+* **Etapa 1 — STT (Speech-to-Text):** Transforma o áudio em texto. Utiliza a API Gemini como via principal. Em contingência, aciona um serviço de simulação local.
+* **Etapa 2 — Motor de Extração:** Interpreta a intenção do comando. O LLM mapeia o jargão clínico. A via de contingência utiliza Expressões Regulares (Regex).
+* **Etapa 3 — Validação:** O Pydantic aplica regras matemáticas e clínicas de validação. Ele infere unidades ausentes e bloqueia valores fora das margens de segurança antes de liberar o payload.
+
+---
+
+## 2. Catálogo de comandos e regras de negócio
+
+### 2.1 Justificativa do escopo base
+
+O escopo do protótipo focou em três parâmetros associados à Ventilação Mecânica Invasiva (VMI), escolhidos para validar diferentes desafios do sistema:
+
+1. **PEEP (Positive End-Expiratory Pressure):** Avalia a robustez a jargões, visto que a equipe médica frequentemente omite a unidade e utiliza adaptações fonéticas (como "pipe").
+2. **FiO2 (Fração Inspirada de Oxigênio):** Avalia os limites de segurança. O sistema deve impedir que erros de transcrição resultem em valores fisicamente impossíveis (como 200%).
+3. **FR (Frequência Respiratória):** Avalia a ambiguidade de unidades, que podem ser ditas de forma abreviada ("irpm") ou por extenso ("incursões por minuto").
+
+### 2.2 Limites clínicos de segurança
+
+As regras abaixo estão codificadas na camada do Pydantic (`PARAMETER_BOUNDS`). Valores fora desses limites são classificados como inválidos pelo sistema.
+
+| Parâmetro Canônico | Alias Clínico Comum | Unidade Padrão | Intervalo Seguro | Risco Potencial em Caso de Erro |
+|---|---|---|---|---|
+| `peep` | PEEP, pipe | cmH2O | 0.0 a 25.0 | Barotrauma / Colapso Alveolar |
+| `fio2` | FiO2, fi de o2 | % | 21.0 a 100.0 | Toxicidade por Oxigênio |
+| `frequencia_respiratoria` | FR, respiração | irpm | 4.0 a 60.0 | Alcalose / Acidose Respiratória |
+| `volume_corrente` | VC, Vt | ml | 200.0 a 800.0 | Volutrauma |
+| `pressao_arterial` | PA, pressão | mmHg | Sistólica/Diastólica | Exige interpretação manual |
+
+---
+
+## 3. Contrato de interface (Schema)
+
+A saída do pipeline deve seguir rigorosamente o schema abaixo (`MedicalParameterExtraction`). Ele representa o JSON consumido por um sistema de hardware (ex: CLP).
+
+```json
+{
   "intent": "ajustar_parametro",
   "parameter": "peep",
   "value": 5.0,
@@ -40,4 +80,27 @@ Etapa 1 — STT (Speech-to-Text): Responsável por transformar o áudio em texto
   "status": "OK_INFERRED_UNIT_BY_RULE",
   "notes": "Unidade 'cmH2O' injetada por regra determinística local."
 }
-3.1 Tratamento de Estados (State Machine)StatusSignificadoAção do Sistema ClínicoOKExtração perfeita sem interferências.Encaminhar comandoOK_INFERRED_UNITO LLM deduziu a unidade pelo contexto de forma autônoma.Encaminhar comandoOK_INFERRED_UNIT_BY_RULEO motor Pydantic injetou a unidade canônica por regra hard-coded (segurança).Encaminhar comandoOUT_OF_BOUNDSO valor extraído excedeu os limites clínicos permitidos.Bloquear Operação + Alerta VisualMISSING_VALUEComando incompleto sem valor numérico claro (ex: "ajusta a PEEP").Solicitar repetição ao usuárioREQUIRES_CLARIFICATIONAmbiguidade semântica/matemática (ex: frações "12 por 8").Solicitar contexto ao usuário4. Engenharia de Resiliência (Fail-Fast & Fallback)Alucinações matemáticas e quedas de nuvem são os maiores riscos em cenários críticos. O pipeline vlab implementa três camadas de proteção:Prompting Defensivo (IA): O sistema é instruído a preencher o value com null e adotar status de MISSING_VALUE caso a frase não possua dígitos (evitando que a IA "invente" um número para agradar o usuário).Barreira Determinística (Pydantic): Funciona como um "Juiz de Ouro" rodando localmente. Se o LLM alucinar uma Frequência Respiratória de 150 irpm, o Pydantic intercepta, altera o payload para OUT_OF_BOUNDS e barra a instrução.Graceful Degradation (Heurística Offline): Em caso de falha de API ou esgotamento de cotas (HTTP 429), o sistema intercepta o erro de nuvem silenciosamente e roteia a transcrição para um extrator local baseado em Expressões Regulares (HeuristicParameterExtractor), garantindo que a extração não falhe e entregue o JSON.
+```
+
+### Tratamento de status
+
+O campo `status` guia a lógica do sistema consumidor sobre o que fazer com a instrução:
+
+| Status | Condição | Ação Esperada |
+|---|---|---|
+| `OK` | Extração validada. | Encaminhar comando. |
+| `OK_INFERRED_UNIT` | A IA deduziu a unidade corretamentamente. | Encaminhar comando. |
+| `OK_INFERRED_UNIT_BY_RULE` | A unidade foi injetada pela validação local. | Encaminhar comando. |
+| `OUT_OF_BOUNDS` | O valor extraído excede o intervalo seguro. | Bloquear operação. |
+| `MISSING_VALUE` | Comando incompleto (sem número detectável). | Solicitar repetição. |
+| `REQUIRES_CLARIFICATION` | Ambiguidade identificada (ex: fração de PA). | Solicitar contexto ao usuário. |
+
+---
+
+## 4. Engenharia e resiliência
+
+Erros de inferência e instabilidade de rede são riscos centrais no uso de LLMs em sistemas críticos. O pipeline os mitiga através das seguintes abordagens:
+
+1. **Limitação no prompt:** As instruções exigem que o modelo retorne `null` e o status `MISSING_VALUE` caso a frase não possua dígitos, impedindo a geração de números inexistentes para preencher lacunas.
+2. **Validação estrita:** Se a IA interpretar um valor inválido, o validador Pydantic altera o status para `OUT_OF_BOUNDS`, barrando a requisição antes da resposta HTTP final.
+3. **Contingência de API:** Se as tentativas de rede falharem por esgotamento de cota, o sistema direciona o texto transcrito para o extrator baseado em Regex (`HeuristicParameterExtractor`), assegurando a entrega do JSON sem tempo de inatividade para o usuário.

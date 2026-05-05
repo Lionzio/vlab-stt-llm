@@ -1,58 +1,60 @@
-# Análise Experimental e Qualitativa de STT e Extração NLP no Domínio Clínico
+# Análise experimental de STT e extração NLP no domínio clínico
 
 **Projeto:** `vlab-stt-llm`
-**Foco:** Avaliação do pipeline de Inteligência Artificial para Recomendação de Parâmetros e Interface de Voz.
+
+## 1. Estratégia adotada
+
+A arquitetura do pipeline combina duas etapas probabilísticas (STT → Extração NLP) com uma etapa determinística final (Schema Enforcement). O dado nunca chega ao sistema consumidor sem passar pela validação rígida do Pydantic — independentemente de ter vindo da IA ou do extrator de fallback.
+
+Para a extração semântica, comparamos duas estratégias via teste A/B:
+
+**V1 (Direct Schema):** Zero-Shot Prompting com `response_schema` nativo do Gemini. O modelo retorna JSON estruturado diretamente, sem etapas intermediárias. Foco em baixa latência, essencial para aplicações de comando de voz em tempo real.
+
+**V2 (Chain-of-Thought):** O prompt exige que o modelo produza um bloco `<reasoning>` antes de preencher o JSON. O modelo explica em texto livre cada decisão (identificação da intenção, mapeamento do parâmetro, inferência da unidade, verificação de limites) antes de commitar a resposta estruturada. Isso aumenta a interpretabilidade e a robustez em cenários ambíguos, mas eleva latência e consumo de tokens.
+
+### O diferencial determinístico
+
+LLMs são modelos estatísticos — eles inferem o que é provável, não o que é seguro. Em domínios críticos, isso é inaceitável sem uma rede de segurança. O `@model_validator` do Pydantic atua como essa rede:
+
+- **Injeção de unidade:** se o modelo retornar PEEP sem unidade, o validator injeta `cmH2O` pela tabela canônica do domínio e sinaliza `OK_INFERRED_UNIT_BY_RULE`.
+- **Safety bounds:** se o modelo aceitar FiO2 de 200%, o validator força `OUT_OF_BOUNDS` — sem depender de instrução de prompt que o modelo pode ignorar.
 
 ---
 
-## 1. Resumo da Estratégia Adotada (Abordagem Híbrida e Fail-Fast)
+## 2. Desafios do domínio clínico
 
-O desenvolvimento deste componente experimental baseou-se em uma arquitetura de duas etapas probabilísticas (STT $\rightarrow$ Extração NLP) seguidas por uma etapa determinística de consolidação rigorosa (Schema Enforcement). 
+A captura de voz em UTI impõe problemas que não existem em contextos genéricos:
 
-Para a extração semântica, adotamos testes A/B comparando duas estratégias:
-*   **Variante V1 (Direct Schema):** Utiliza *Zero-Shot Prompting* em conjunto com a *Structured Outputs API* nativa do Gemini. Foca em baixa latência, característica fundamental para aplicações de comando de voz.
-*   **Variante V2 (Chain-of-Thought):** Utiliza um prompt estruturado que obriga o modelo a gerar um bloco de raciocínio `<reasoning>` antes de emitir o JSON.
+**Omissão de unidades:** médicos dizem "coloca a PEEP em cinco" assumindo que o sistema sabe que a unidade é `cmH2O`. O sistema precisa inferir isso pelo contexto, não exigir que o usuário seja explícito.
 
-**O Diferencial — Postura Fail-Fast (Hard Rules):** 
-Modelos fundacionais (LLMs) são estatísticos e propensos a alucinações (ex: inferir valores vitais fora do escopo clínico). Portanto, a solução proposta **não confia cegamente na IA**. Utilizamos o **Pydantic** (`@model_validator`) para atuar de forma determinística:
-1.  **Injeção de Unidade:** Preenche unidades omitidas com valores canônicos do domínio (ex: PEEP $\rightarrow$ `cmH2O`).
-2.  **Validação de Limites (Safety Bounds):** Se a IA extrai uma fração absurda ou comete um erro de escala (ex: FiO2 de 200%), o algoritmo bloqueia a ação e transita o status imediatamente para `OUT_OF_BOUNDS`, impedindo uma falha letal na ponta (equipamento).
+**Ambiguidade em frações:** "PA doze por oito" é pressão arterial 120/80 mmHg. Matematicamente é a fração 12/8. O sistema deve se recusar a resolver a ambiguidade como um único `float` e acionar `REQUIRES_CLARIFICATION`.
+
+**Homófonos e siglas:** `PEEP` pode ser transcrito como "pipe" pelo STT — um erro fonético que ocorreu no TC-002 dos testes. A camada semântica precisa mapear ambos para o mesmo parâmetro canônico.
 
 ---
 
-## 2. Dificuldades e Nuances do Domínio Médico
+## 3. Comportamento do STT e métricas
 
-A captura de voz em Unidades de Terapia Intensiva (UTIs) impõe severos desafios lexicais e semânticos:
+### Padrões de erro identificados
 
-1.  **Omissão de Unidades (Implicidade):** Médicos frequentemente dizem *"Coloca a PEEP em cinco"*. O sistema deve deduzir que a unidade natural é `cmH2O`, não `mmHg` ou `%`.
-2.  **Ambiguidade Numérica:** Expressões como *"PA doze por oito"* são compreendidas como $120 \times 80 \text{ mmHg}$, mas algoritmicamente são frações matemáticas ($12/8$). A IA deve ser orientada a recusar a simplificação para um único `float` e acionar o status `REQUIRES_CLARIFICATION`.
-3.  **Variabilidade Fonética e Homófonos:** Acrônimos como `PEEP` podem ser interpretados pelo STT como *"pipe"*. A camada semântica precisa de alta resiliência para consolidar essas entidades ambíguas em um único formato canônico.
+O STT (Gemini Flash rodando sobre áudios sintéticos do gTTS) apresentou três padrões de erro consistentes:
 
----
+- **Formatação de números:** alternância imprevisível entre numeral ("600") e extenso ("seiscentos"). O TC-006 recebeu "600" onde o gabarito esperava "seiscentos".
+- **Siglas técnicas:** `FiO2` foi transcrito como "efiio dois" no TC-004 — erro de substituição acústica em sigla fora do vocabulário padrão do modelo.
+- **Ruído paralinguístico:** tosses e ruídos de fundo aparecem literalmente ("coff coff") ou como marcadores textuais.
 
-## 3. Análise Orientada a STT (Comportamento do Modelo e Métricas)
+### WER alto não implica falha de extração
 
-Durante a avaliação automatizada no Mock Dataset de 10 casos, observamos o comportamento da transcrição e seu impacto direto na extração estruturada.
+O resultado mais relevante do benchmark é que WER e taxa de extração correta não se correlacionam linearmente. No TC-002, o STT transcreveu "pipe" no lugar de "peep" — WER de 20% — mas o LLM extraiu corretamente `parameter=peep, unit=cmH2O, status=OK_INFERRED_UNIT`. No TC-004, o STT gerou "efiio dois" para FiO2 — WER de 33% — mas o LLM mapeou para `fio2` e o Pydantic bloqueou o valor 200% como `OUT_OF_BOUNDS`.
 
-### 3.1 Padrões de Erro Frequentes Identificados
-*   **Formatação Oscilante de Números:** O STT alterna imprevisivelmente entre numerais inteiros ("600") e numerais por extenso ("seiscentos" ou até "meia dúzia").
-*   **Interpretação Fonética Errática:** Siglas técnicas desconhecidas pelo léxico padrão do modelo frequentemente geram erros de substituição acústica (ex: `FiO2` transcrito como `efiio dois`).
-*   **Ruído Paralinguístico:** Tosses, hesitações ou ruídos de fundo (alarmes) são transcritos literalmente ("coff coff") ou via marcadores textuais (`[ruído]`).
-
-### 3.2 Impacto na Extração Estruturada (Exact Match vs WER)
-Neste projeto, substituímos métricas acadêmicas abstratas (Recall/F1) por métricas pragmáticas de engenharia: **Exact Match Rate** e **Parse Error Rate**.
-
-Observou-se que um aumento isolado no *Word Error Rate (WER)* da transcrição **não degrada proporcionalmente o Exact Match** do pipeline. O impacto dos erros de STT é mitigado de forma agressiva pela alta capacidade de inferência contextual do LLM. 
-Por exemplo, mesmo quando o STT gerou *"pipe"* no lugar de *"peep"*, a taxa de Parse Error permaneceu em 0% e o Exact Match foi mantido em 100%, pois o LLM inferiu corretamente o parâmetro através da semântica da frase inteira (*"coloca a pipe em cinco"*).
-
-A perda de extração torna-se irreversível apenas em cenários de *syllable dropout* crítico (onde a palavra-chave ou o valor numérico somem fisicamente da onda sonora gravada).
+A extração só falha de forma irreversível quando a palavra-chave ou o valor numérico desaparecem completamente da onda sonora — o chamado *syllable dropout* crítico.
 
 ---
 
-## 4. Mitigações Aplicadas e Recomendadas
+## 4. Mitigações implementadas
 
-Para elevar o desempenho do pipeline e contornar os desafios supracitados, as seguintes mitigações estruturais foram implementadas:
+**Prompt defensivo com few-shot:** o system instruction das variantes V1 e V2 inclui exemplos explícitos de mapeamento de jargões clínicos e homófonos comuns (`pipe → peep`, `f i o dois → fio2`). Isso reduz erros de substituição semântica sem depender do vocabulário padrão do modelo.
 
-1.  **Prompt Engineering Defensivo (Few-Shot):** O *System Instruction* das variantes V1 e V2 explicita o mapeamento de jargões, gírias clínicas e homófonos comuns para seus respectivos parâmetros canônicos.
-2.  **Arquitetura Fail-Fast com Pydantic:** A injeção de regras atua como o "adulto na sala". Se o LLM alucinar no parseamento matemático, o sistema reverte a transação de forma determinística caso o dado infrinja os *Safety Bounds*, sem depender de checagens baseadas em prompt.
-3.  **Normalização Lexical:** Para o cálculo das métricas acústicas base de STT (WER/CER), recomenda-se a aplicação contínua de pipelines de limpeza textual (ex: via `jiwer` transforms) para remover vírgulas e pontuações injetadas aleatoriamente pelos modelos de Whisper/Gemini, evitando falsas punições na avaliação.
+**Validação determinística via Pydantic:** a validação roda localmente, sem chamada de rede. Se o LLM inferir uma frequência respiratória de 150 irpm, o Pydantic intercepta e força `OUT_OF_BOUNDS` — a decisão não passa por probabilidade.
+
+**Normalização textual para métricas:** o cálculo de WER/CER usa o pipeline `jiwer` com `RemovePunctuation` e `ToLowerCase` antes da comparação, evitando que pontuação injetada aleatoriamente pelos modelos penalize artificialmente os scores.
