@@ -2,6 +2,7 @@
 
 Pipeline experimental para transcrição e extração estruturada de parâmetros médicos a partir de comandos de voz, com foco em equipamentos de suporte à vida (ventiladores mecânicos e monitores).
 
+[![Reproduce in Colab](https://img.shields.io/badge/Colab-Reproduzir_Avaliação-F9AB00?style=for-the-badge&logo=googlecolab)](https://colab.research.google.com/drive/1WBsxhNbp5do3uSf1QRd5eGImf_5zdESi?usp=sharing)
 [![Live Demo](https://img.shields.io/badge/Live_Demo-Acessar_Frontend-000000?style=for-the-badge&logo=vercel)](https://vlab-stt-llm.vercel.app)
 [![API Docs](https://img.shields.io/badge/Swagger_UI-Acessar_API-46E3B7?style=for-the-badge&logo=fastapi)](https://vlab-stt-llm.onrender.com/docs)
 [![CI Pipeline](https://github.com/Lionzio/vlab-stt-llm/actions/workflows/ci.yml/badge.svg)](https://github.com/Lionzio/vlab-stt-llm/actions/workflows/ci.yml)
@@ -11,7 +12,18 @@ Pipeline experimental para transcrição e extração estruturada de parâmetros
 
 ## 🚀 Teste em produção (Live demo)
 
-A maneira mais rápida de avaliar esta Prova de Conceito é através do nosso ambiente Cloud (Frontend na Vercel + API no Render com Graceful Degradation):
+## 🧪 Avaliação e reprodutibilidade (Google Colab)
+
+Para garantir a integridade científica deste pipeline e evitar o clássico "funciona na minha máquina", disponibilizamos um **Notebook Reproduzível** que executa o setup completo, injeção de ruído e métricas de avaliação em um ambiente Linux isolado:
+
+1. Clique no badge **[Reproduzir avaliação]** no topo deste README.
+2. O notebook irá clonar este repositório, instalar o `FFmpeg` e todas as dependências do `Poetry`.
+3. Forneça suas chaves de API (`GEMINI_API_KEY_PRIMARY`) quando solicitado.
+4. O script `evaluate_pipeline.py` será executado, gerando o relatório final e as métricas de WER/CER (Word/Character Error Rate) em condições de stress.
+
+> **Vantagem:** Este ambiente resolve automaticamente dependências de sistema para manipulação de áudio, garantindo que o teste de stress com injeção de ruído hospitalar funcione perfeitamente.
+
+Outra forma rápida de avaliar esta prova de conceito é através do nosso ambiente Cloud (Frontend na Vercel + API no Render com Graceful Degradation):
 
 1. Acesse o **[VLab Command Center (Frontend)](https://vlab-stt-llm.vercel.app)**.
 2. Na pasta `data/audio_samples/` deste repositório, baixe um dos arquivos de áudio de teste (ex: `TC-001.mp3` para um caso de sucesso ou `TC-004.mp3` para forçar um bloqueio de segurança).
